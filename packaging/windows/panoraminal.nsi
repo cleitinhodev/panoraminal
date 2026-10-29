@@ -1,6 +1,11 @@
 ; Panoraminal installer (NSIS 3, Modern UI 2)
 ; Build: makensis -DVERSION=1.0.0 -DSRCDIR=<dir with panoraminal.exe> -DOUTFILE=<setup.exe> packaging/windows/panoraminal.nsi
-Unicode true
+; -DTARGET_AMD64 builds a native 64-bit installer (needs NSIS amd64 stubs, e.g. Debian/Ubuntu nsis).
+!ifdef TARGET_AMD64
+  Target amd64-unicode
+!else
+  Unicode true
+!endif
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 
@@ -63,6 +68,7 @@ FunctionEnd
 
 Section "Panoraminal" SecMain
   SectionIn RO
+  SetShellVarContext all
   SetOutPath "$INSTDIR"
   File "${SRCDIR}\panoraminal.exe"
   File "/oname=LICENSE.txt" "..\..\LICENSE"
@@ -94,6 +100,7 @@ Section "Panoraminal" SecMain
 SectionEnd
 
 Section "Uninstall"
+  SetShellVarContext all
   Delete "$INSTDIR\panoraminal.exe"
   Delete "$INSTDIR\LICENSE.txt"
   Delete "$INSTDIR\OFL-NotoSansCJK.txt"
