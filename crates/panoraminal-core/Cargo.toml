@@ -1,0 +1,14 @@
+[package]
+name = "panoraminal-core"
+description = "Document model, layers, blending, brush engine and equirectangular math for Panoraminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

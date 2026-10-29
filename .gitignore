@@ -1,0 +1,11 @@
+/target/
+/dist/
+node_modules/
+*.AppImage
+*.deb
+*.tar.gz
+*.zip
+*.exe
+!/packaging/**/*.nsi
+.DS_Store
+*.swp

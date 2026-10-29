@@ -1,0 +1,39 @@
+[package]
+name = "panoraminal"
+description = "Panoraminal — paint 360° equirectangular panoramas directly on the sphere"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+build = "build.rs"
+
+[[bin]]
+name = "panoraminal"
+path = "src/main.rs"
+
+[dependencies]
+panoraminal-core = { path = "../panoraminal-core" }
+panoraminal-render = { path = "../panoraminal-render" }
+panoraminal-io = { path = "../panoraminal-io" }
+panoraminal-i18n = { path = "../panoraminal-i18n" }
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "links", "clipboard", "accesskit"] }
+egui-wgpu = "0.37"
+rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[package.metadata.deb]
+maintainer = "cleitinhodev / bugzinho"
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "panoraminal-render"
+description = "wgpu renderer for Panoraminal: GPU layer compositing and the 360° / flat views"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+panoraminal-core = { path = "../panoraminal-core" }
+egui-wgpu = "0.37"
+egui = { version = "0.37", default-features = false }
+wgpu = { version = "30", default-features = false }
+bytemuck = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

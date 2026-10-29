@@ -1,0 +1,15 @@
+[package]
+name = "panoraminal-i18n"
+description = "Translations for Panoraminal (8 languages)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json = "1"
+sys-locale = "0.3"
+
+[lints]
+workspace = true
