@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          if ($v -notmatch '^\d') { $v = "0.0.0-dev" }
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item target/release/panoraminal.exe stage/
+          Copy-Item LICENSE stage/LICENSE.txt
+          Copy-Item README.md stage/
+          Copy-Item crates/panoraminal/assets/fonts/OFL.txt stage/OFL-NotoSansCJK.txt
+          Compress-Archive -Path stage/* -DestinationPath "dist/Panoraminal-$v-windows-x64-portable.zip"
+          choco install nsis -y --no-progress
+          & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$($v -replace '-.*','')" "/DSRCDIR=..\..\target\release" "/DOUTFILE=..\..\dist\Panoraminal-Setup-$v-x64.exe" packaging/windows/panoraminal.nsi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libfuse2
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          curl -sSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          APPIMAGETOOL=$PWD/appimagetool packaging/linux/build-packages.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build universal binary
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output panoraminal target/aarch64-apple-darwin/release/panoraminal target/x86_64-apple-darwin/release/panoraminal
+      - name: App bundle
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          A=Panoraminal.app/Contents
+          mkdir -p $A/MacOS $A/Resources
+          cp panoraminal $A/MacOS/panoraminal
+          mkdir icon.iconset
+          for s in 32 128 256; do sips -z $s $s crates/panoraminal/assets/icons/panoraminal_icon_256.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
+          iconutil -c icns icon.iconset -o $A/Resources/panoraminal.icns
+          cat > $A/Info.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Panoraminal</string>
+            <key>CFBundleDisplayName</key><string>Panoraminal</string>
+            <key>CFBundleIdentifier</key><string>com.bugzinho.panoraminal</string>
+            <key>CFBundleVersion</key><string>$v</string>
+            <key>CFBundleShortVersionString</key><string>$v</string>
+            <key>CFBundleExecutable</key><string>panoraminal</string>
+            <key>CFBundleIconFile</key><string>panoraminal</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep -s - Panoraminal.app
+          ditto -c -k --keepParent Panoraminal.app "dist/Panoraminal-$v-macos-universal.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+
+  publish:
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum * > SHA256SUMS.txt && ls -la
+      - name: Upload to the release (created if missing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "Panoraminal $GITHUB_REF_NAME" --generate-notes
+          for f in dist/*; do
+            n=$(basename "$f")
+            if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "$n"; then
+              echo "skip existing $n"
+            else
+              gh release upload "$GITHUB_REF_NAME" "$f" -R "$GITHUB_REPOSITORY"
+            fi
+          done

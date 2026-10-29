@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Panoraminal
+GenericName=360° Panorama Painter
+GenericName[pt_BR]=Pintor de panoramas 360°
+Comment=Paint 360° equirectangular panoramas directly on the sphere
+Comment[pt_BR]=Pinte panoramas 360° diretamente na esfera
+Exec=panoraminal %f
+Icon=panoraminal
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+Keywords=360;panorama;equirectangular;paint;drawing;VR;
+MimeType=image/png;image/jpeg;image/webp;application/x-panoraminal;
+StartupWMClass=panoraminal
