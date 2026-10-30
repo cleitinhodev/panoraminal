@@ -9,6 +9,8 @@
 //!   seam wrapping and polar distortion correction).
 //! * [`history`] — tile-based undo/redo.
 //! * [`rect`] — integer rectangles and dirty-region tracking.
+//! * [`tip`] — sampled brush tips (custom brushes) and their dynamics.
+//! * [`place`] — placing images on the sphere (spherical patch / gnomonic projector).
 
 pub mod blend;
 pub mod brush;
@@ -16,7 +18,9 @@ pub mod document;
 pub mod fill;
 pub mod history;
 pub mod math;
+pub mod place;
 pub mod rect;
+pub mod tip;
 
 pub use blend::BlendMode;
 pub use brush::{BrushSettings, StrokeEngine, ToolKind};
@@ -24,6 +28,7 @@ pub use document::{Document, Layer, LayerId};
 pub use history::{Edit, History};
 pub use math::{Camera, FlatView, Vec3};
 pub use rect::{DirtyRegion, IRect};
+pub use tip::{PreparedTip, TipDynamics, TipImage};
 
 /// Largest supported document side, in pixels.
 pub const MAX_DIM: u32 = 8192;
