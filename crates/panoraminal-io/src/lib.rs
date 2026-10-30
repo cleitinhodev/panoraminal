@@ -5,7 +5,11 @@
 //!   Facebook, Google Photos and other 360° viewers recognise them as panoramas.
 //! * The `.pano` project format: a ZIP archive with a JSON manifest and one PNG per layer.
 //! * Import of legacy Paint360 projects (`.p360.json`).
+//! * Custom brushes: Photoshop `.abr`, GIMP `.gbr`/`.gih` and image tips, and the
+//!   on-disk brush library.
 
+pub mod abr;
+pub mod brushes;
 mod project;
 mod xmp;
 

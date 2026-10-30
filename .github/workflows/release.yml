@@ -110,20 +110,37 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # SHA256SUMS.txt may already be on the release (uploaded with locally built
-      # packages), so the CI-built files get their own checksum list.
-      - run: cd dist && sha256sum * > SHA256SUMS-ci.txt && ls -la
+      - run: ls -la dist
       - name: Upload to the release (created if missing)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "Panoraminal $GITHUB_REF_NAME" --generate-notes
+          existing=$(gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
           for f in dist/*; do
             n=$(basename "$f")
-            if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "$n"; then
+            # Packages uploaded by hand (e.g. locally built and tested) are kept as they are.
+            if echo "$existing" | grep -qx "$n"; then
               echo "skip existing $n"
             else
               gh release upload "$GITHUB_REF_NAME" "$f" -R "$GITHUB_REPOSITORY"
             fi
+          done
+      - name: Single SHA256SUMS.txt for every asset of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Checksums are computed from the files actually published on the release,
+          # so hand-uploaded and CI-built packages share one list.
+          rm -rf published && mkdir published && cd published
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --skip-existing
+          rm -f SHA256SUMS*.txt
+          sha256sum * | sort -k2 > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+          cd ..
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber -R "$GITHUB_REPOSITORY"
+          # Drop checksum files from older workflow versions.
+          for old in $(gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -E '^SHA256SUMS.+\.txt$' || true); do
+            gh release delete-asset "$GITHUB_REF_NAME" "$old" -y -R "$GITHUB_REPOSITORY"
           done

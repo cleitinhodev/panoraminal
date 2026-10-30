@@ -1,10 +1,12 @@
 //! The user interface: panels, canvas, dialogs, help and about.
 
+pub mod brushlib;
 pub mod canvas;
 pub mod color;
 pub mod dialogs;
 pub mod help;
 pub mod layers;
+pub mod place;
 pub mod widgets;
 
 use crate::app::{PanoApp, Pending, ToastKind, Tool};
@@ -301,8 +303,18 @@ fn menus(app: &mut PanoApp, ui: &mut egui::Ui) {
                 app.save_as(&ctx, None);
             }
             ui.separator();
+            if menu_item(ui, tr("menu.file.insert_image"), Some(Action::InsertImage)) {
+                app.insert_image_dialog(&ctx);
+            }
             if menu_item(ui, tr("menu.file.import"), Some(Action::ImportLayer)) {
                 app.import_layer_dialog(&ctx);
+            }
+            if menu_item(
+                ui,
+                tr("menu.file.import_brushes"),
+                Some(Action::ImportBrushes),
+            ) {
+                app.import_brushes_dialog(&ctx);
             }
             if menu_item(ui, tr("menu.file.export_png"), Some(Action::ExportPng)) {
                 app.export(&ctx, false);
@@ -345,6 +357,10 @@ fn menus(app: &mut PanoApp, ui: &mut egui::Ui) {
                 .inner
             {
                 app.redo(&ctx);
+            }
+            ui.separator();
+            if menu_item(ui, tr("menu.edit.paste_image"), Some(Action::PasteImage)) {
+                app.paste_image_from_clipboard(&ctx);
             }
             ui.separator();
             if menu_item(ui, tr("menu.edit.clear"), Some(Action::ClearLayer)) {

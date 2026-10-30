@@ -30,6 +30,8 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 
 - **Duas vistas** — *Esfera* (câmera em perspectiva, campo de visão até 120°) e *Plana* (equirretangular com prévia da emenda). Alterne com `V`.
 - **Motor de pincel na esfera** — caneta, pincel, aerógrafo e borracha; tamanho, opacidade, fluxo, dureza, espaçamento, suavização e correção polar.
+- **Pincéis personalizados** (novo na 1.1) — biblioteca de pincéis com miniaturas, traço de prévia ao vivo, renomear, categorias, favoritos e busca. Importe **`.abr` do Photoshop** (v1/v2 e v6+, pontas amostradas com suas predefinições), **`.gbr` / `.gih` do GIMP** e qualquer **PNG / JPEG / WebP** como ponta. Dinâmica: espaçamento, ângulo, arredondamento, variação de tamanho/ângulo/arredondamento, dispersão, quantidade, variação de opacidade/fluxo, espelhamentos aleatórios e pressão da caneta. Os carimbos são projetados na esfera, então ficam corretos na emenda e nos polos. Os pincéis usados num projeto são incorporados ao arquivo `.pano`.
+- **Posicionar imagens na cena** (novo na 1.1) — solte, cole ou insira uma foto/logo e ela flutua sobre o panorama como um objeto não destrutivo: mova, escale (uniforme ou livre), gire, espelhe e ajuste a opacidade com alças na tela, nas duas vistas. Duas projeções: **Envolver** (curvada sobre a esfera como um adesivo) e **Persistente** (um quadro plano projetado do centro, sem distorção a partir da direção ancorada, com *Reapontar para a vista*). Prévia ao vivo na GPU, aplicação em qualidade total com `Enter`, *Posicionar como nova camada*, `Esc` para cancelar, desfazer/refazer.
 - **Pressão da caneta** no tamanho e/ou na opacidade (veja as [limitações](#limitações-conhecidas)).
 - **Linhas retas** com `Shift`+clique (círculos máximos), **conta-gotas** (`I` ou `Alt`+clique) e **balde de tinta 360°** que atravessa a emenda.
 - **Camadas** — até 64, reordenáveis por arrastar e soltar, renomear, visibilidade, trava de transparência, opacidade e 9 modos de mesclagem (normal, multiplicar, tela, sobrepor, escurecer, clarear, adição/brilho, diferença, luz suave), com miniaturas ao vivo.
@@ -45,6 +47,8 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 
 | | |
 |---|---|
+| ![Biblioteca de pincéis](docs/screenshots/custom-brushes-light-pt.png) | ![Imagem posicionada (projeção Persistente)](docs/screenshots/place-persistent.png) |
+| ![Imagem posicionada (projeção Envolver)](docs/screenshots/place-wrap.png) | ![Pincéis personalizados](docs/screenshots/custom-brushes.png) |
 | ![Tema escuro](docs/screenshots/dark-sphere.png) | ![Vista plana](docs/screenshots/dark-flat.png) |
 | ![Janela de ajuda](docs/screenshots/help-dark.png) | ![Janela Sobre](docs/screenshots/about-light.png) |
 | ![Configurações em japonês](docs/screenshots/settings-ja.png) | |
@@ -68,7 +72,7 @@ No macOS, `Ctrl` vira `⌘`. A lista completa está em **Ajuda → Atalhos** (`F
 | Ferramentas | | Pincel | |
 |---|---|---|---|
 | `P` Caneta | `B` Pincel | `[` / `]` Tamanho − / + | `{` / `}` Dureza − / + |
-| `A` Aerógrafo | `E` Borracha | `Shift`+clique Linha a partir do último ponto | `Alt`+clique Pegar cor |
+| `A` Aerógrafo · `C` Pincel personalizado | `E` Borracha | `Shift`+clique Linha a partir do último ponto | `Alt`+clique Pegar cor |
 | `I` Conta-gotas | `F` Balde | `X` Trocar cores | `Esc` Cancelar traço / fechar janela |
 
 | Arquivo | | Editar e camadas | |
@@ -76,7 +80,8 @@ No macOS, `Ctrl` vira `⌘`. A lista completa está em **Ajuda → Atalhos** (`F
 | `Ctrl+N` Novo | `Ctrl+O` Abrir | `Ctrl+Z` Desfazer | `Ctrl+Shift+Z` / `Ctrl+Y` Refazer |
 | `Ctrl+S` Salvar | `Ctrl+Shift+S` Salvar como | `Del` Limpar camada | `Ctrl+Shift+N` Nova camada |
 | `Ctrl+E` Exportar PNG | `Ctrl+Shift+E` Exportar JPEG 360° | `Ctrl+J` Duplicar camada | `Ctrl+M` Mesclar abaixo |
-| `Ctrl+I` Importar como camada | `Ctrl+,` Configurações | | |
+| `Ctrl+I` Importar como camada | `Ctrl+,` Configurações | `Ctrl+Shift+V` / `Ctrl+V` Colar imagem | `Enter` Mesclar imagem posicionada |
+| `Ctrl+Shift+I` Inserir imagem | `Ctrl+Shift+B` Importar pincéis | `Esc` Cancelar posicionamento | |
 
 | Vista | |
 |---|---|
@@ -119,12 +124,15 @@ Os scripts de empacotamento ficam em [`packaging/`](packaging): `packaging/linux
 panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
   --lang <código>                  força um idioma (en, pt-BR, es, fr, de, it, ja, zh-CN)
   --theme <dark|light|system>      força um tema
+  --tool <pen|brush|airbrush|custom|eraser>   começa com uma ferramenta
   --version, --help
 ```
 
 ## Limitações conhecidas
 
 - A **pressão da caneta** vem do sistema via winit. Funciona com Windows Ink / canetas do tipo "pointer" e dispositivos com força de toque; drivers de mesa digitalizadora apenas Wintab e muitas mesas no X11/Wayland ainda não informam pressão ao winit — nesse caso o traço usa pressão máxima.
+- A **importação de ABR** lê pontas amostradas e calculadas e as predefinições comuns (veja Recursos). Pincel duplo, textura, pontas de cerdas/erodíveis, dinâmica de cor, bordas molhadas e ruído ainda não têm equivalente: são ignorados e listados num aviso no pincel. Pontas coloridas viram máscaras (pintadas com a cor atual). O importador é testado com arquivos sintetizados; abra uma issue com qualquer `.abr` que não carregue.
+- Imagens posicionadas são limitadas a 4096 px no lado maior (imagens maiores são reduzidas).
 - Tamanho máximo do documento: 8192 × 4096 (limite de textura da maioria das GPUs); 64 camadas.
 - A versão para macOS é gerada pelo CI e não é assinada nem notarizada.
 - Com renderizador por software (llvmpipe, WARP), documentos grandes ficam lentos.

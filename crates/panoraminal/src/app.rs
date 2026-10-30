@@ -28,10 +28,11 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 6] = [
+    pub const ALL: [Tool; 7] = [
         Tool::Paint(ToolKind::Pen),
         Tool::Paint(ToolKind::Brush),
         Tool::Paint(ToolKind::Airbrush),
+        Tool::Paint(ToolKind::Custom),
         Tool::Paint(ToolKind::Eraser),
         Tool::Eyedropper,
         Tool::Fill,
@@ -41,6 +42,7 @@ impl Tool {
             Tool::Paint(ToolKind::Pen) => "tool.pen",
             Tool::Paint(ToolKind::Brush) => "tool.brush",
             Tool::Paint(ToolKind::Airbrush) => "tool.airbrush",
+            Tool::Paint(ToolKind::Custom) => "tool.custom",
             Tool::Paint(ToolKind::Eraser) => "tool.eraser",
             Tool::Eyedropper => "tool.eyedropper",
             Tool::Fill => "tool.fill",
@@ -52,6 +54,7 @@ impl Tool {
             Tool::Paint(ToolKind::Pen) => Glyph::Pen,
             Tool::Paint(ToolKind::Brush) => Glyph::Brush,
             Tool::Paint(ToolKind::Airbrush) => Glyph::Airbrush,
+            Tool::Paint(ToolKind::Custom) => Glyph::CustomBrush,
             Tool::Paint(ToolKind::Eraser) => Glyph::Eraser,
             Tool::Eyedropper => Glyph::Eyedropper,
             Tool::Fill => Glyph::Bucket,
@@ -62,6 +65,7 @@ impl Tool {
             Tool::Paint(ToolKind::Pen) => Action::ToolPen,
             Tool::Paint(ToolKind::Brush) => Action::ToolBrush,
             Tool::Paint(ToolKind::Airbrush) => Action::ToolAirbrush,
+            Tool::Paint(ToolKind::Custom) => Action::ToolCustom,
             Tool::Paint(ToolKind::Eraser) => Action::ToolEraser,
             Tool::Eyedropper => Action::ToolEyedropper,
             Tool::Fill => Action::ToolFill,
@@ -119,6 +123,8 @@ pub enum Drag {
     Paint,
     Pick,
     Rotate,
+    /// Dragging a handle of the floating image.
+    Place,
 }
 
 pub struct ScreenshotState {
@@ -176,6 +182,10 @@ pub struct PanoApp {
     pub hex_edit: String,
     pub busy_label: Option<&'static str>,
     pub view_anim: Option<(Camera, Camera, f64)>,
+    /// Custom brush library.
+    pub blib: crate::brushlib::BrushLib,
+    /// An image being placed (not yet merged).
+    pub floating: Option<crate::placing::Floating>,
 }
 
 fn max_dim_for(device_max: u32) -> u32 {
@@ -289,9 +299,22 @@ impl PanoApp {
             hex_edit: String::new(),
             busy_label: None,
             view_anim: None,
+            blib: crate::brushlib::BrushLib::load(cli.screenshot.is_none()),
+            floating: None,
             s,
             cli,
         };
+        if let Some(id) = app.s.custom_brush.clone() {
+            if app.blib.lib.find(&id).is_some() {
+                app.blib.selected = Some(id);
+            }
+        }
+        app.sync_tip();
+        if let Some(t) = app.cli.tool.as_deref() {
+            if let Some(k) = ToolKind::ALL.into_iter().find(|k| k.id() == t) {
+                app.tool = Tool::Paint(k);
+            }
+        }
         if app.cli.demo {
             app.cam = Camera {
                 lon: std::f64::consts::PI * 0.82,
@@ -311,6 +334,9 @@ impl PanoApp {
             Some("new") => app.open_new_dialog(),
             Some("export") => app.dlg.export_jpg = true,
             _ => {}
+        }
+        if let Some(m) = app.cli.place_demo.clone() {
+            app.place_demo(&m);
         }
         if let Some(f) = app.cli.file.clone() {
             app.open_path(ctx, f);
@@ -398,10 +424,16 @@ impl PanoApp {
         self.autosaved_state = self.hist.state_id();
         self.props_drag = None;
         self.dlg.rename = None;
+        self.floating = None;
+        self.blib.used.clear();
     }
 
     pub fn snapshot(&self) -> ProjectSnapshot {
-        ProjectSnapshot::from_document(&self.doc)
+        let mut snap = ProjectSnapshot::from_document(&self.doc);
+        if self.s.embed_brushes {
+            snap.brushes = self.blib.used_brushes();
+        }
+        snap
     }
 
     // ------------------------------------------------------------------ file actions
@@ -658,10 +690,24 @@ impl PanoApp {
                         trf("toast.exported", &[("file", &file_name(&path))]),
                     );
                 }
-                JobResult::OpenedProject { path, snap } => {
+                JobResult::OpenedProject { path, mut snap } => {
                     let legacy = !path.extension().is_some_and(|e| e == "pano");
+                    let embedded = std::mem::take(&mut snap.brushes);
                     let doc = snap.into_document();
                     self.replace_document(doc, Some(path.clone()));
+                    if !embedded.is_empty() {
+                        self.blib.used = embedded.iter().map(|b| b.id.clone()).collect();
+                        let sel = self.blib.selected.clone();
+                        let n = self.blib.import(embedded);
+                        self.blib.selected = sel;
+                        if n > 0 {
+                            self.toast(
+                                ctx,
+                                ToastKind::Info,
+                                trf("brushlib.toast.from_project", &[("n", &n)]),
+                            );
+                        }
+                    }
                     self.cam = Camera::default();
                     self.s.last_dir = path.parent().map(Path::to_path_buf);
                     self.s.push_recent(&path);
@@ -725,6 +771,12 @@ impl PanoApp {
                         }
                     }
                 }
+                JobResult::PlaceLoaded { name, img } => {
+                    self.start_placing(ctx, name, img);
+                }
+                JobResult::BrushesImported { brushes, failed } => {
+                    self.brushes_imported(ctx, brushes, failed);
+                }
                 JobResult::Autosaved { state } => {
                     self.autosaved_state = state;
                 }
@@ -786,12 +838,21 @@ impl PanoApp {
                 };
                 self.stale_thumbs.insert(self.stroke.layer());
                 self.hist.push(e, label, before, before);
+                if self.stroke.tool() == ToolKind::Custom {
+                    if let Some(id) = self.blib.selected.clone() {
+                        self.blib.used.insert(id);
+                    }
+                }
             }
         }
         self.drag = Drag::None;
     }
 
     pub fn undo(&mut self, ctx: &egui::Context) {
+        if let Some(f) = self.floating.as_mut() {
+            f.undo();
+            return;
+        }
         self.finish_stroke();
         if let Some(l) = self.hist.undo_label() {
             self.hist.undo(&mut self.doc);
@@ -801,6 +862,10 @@ impl PanoApp {
     }
 
     pub fn redo(&mut self, ctx: &egui::Context) {
+        if let Some(f) = self.floating.as_mut() {
+            f.redo();
+            return;
+        }
         self.finish_stroke();
         if let Some(l) = self.hist.redo_label() {
             self.hist.redo(&mut self.doc);
@@ -928,6 +993,7 @@ impl PanoApp {
         if self.tool != t {
             self.finish_stroke();
             self.tool = t;
+            self.sync_tip();
         }
     }
 
@@ -992,6 +1058,7 @@ impl PanoApp {
             Action::ToolPen => self.set_tool(Tool::Paint(ToolKind::Pen)),
             Action::ToolBrush => self.set_tool(Tool::Paint(ToolKind::Brush)),
             Action::ToolAirbrush => self.set_tool(Tool::Paint(ToolKind::Airbrush)),
+            Action::ToolCustom => self.set_tool(Tool::Paint(ToolKind::Custom)),
             Action::ToolEraser => self.set_tool(Tool::Paint(ToolKind::Eraser)),
             Action::ToolEyedropper => self.set_tool(Tool::Eyedropper),
             Action::ToolFill => self.set_tool(Tool::Fill),
@@ -1024,6 +1091,14 @@ impl PanoApp {
             Action::ExportPng => self.export(ctx, false),
             Action::ExportJpg => self.dlg.export_jpg = true,
             Action::ImportLayer => self.import_layer_dialog(ctx),
+            Action::InsertImage => self.insert_image_dialog(ctx),
+            Action::PasteImage => self.paste_image_from_clipboard(ctx),
+            Action::PlaceCommit => {
+                if self.floating.is_some() {
+                    self.commit_placement(ctx, false);
+                }
+            }
+            Action::ImportBrushes => self.import_brushes_dialog(ctx),
             Action::NewLayer => self.new_layer(ctx),
             Action::DuplicateLayer => self.duplicate_layer(ctx),
             Action::MergeDown => self.merge_down(ctx),
@@ -1072,8 +1147,11 @@ impl PanoApp {
         for a in fired {
             self.run_action(ctx, a);
         }
+        self.handle_paste(ctx);
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.stroke.is_active() {
+            if self.floating.is_some() {
+                self.cancel_placement();
+            } else if self.stroke.is_active() {
                 self.stroke.cancel();
                 self.drag = Drag::None;
             } else if self.dlg.help {
@@ -1203,7 +1281,16 @@ impl PanoApp {
         if let Some(rs) = frame.wgpu_render_state() {
             let mut r = rs.renderer.write();
             if let Some(c) = r.callback_resources.get_mut::<GpuCanvas>() {
-                c.sync(&rs.device, &rs.queue, &mut self.doc, &mut self.stroke);
+                let doc_w = self.doc.width;
+                let layer = self.doc.active;
+                let pv = self.floating.as_mut().map(|f| f.preview(layer, doc_w));
+                c.sync(
+                    &rs.device,
+                    &rs.queue,
+                    &mut self.doc,
+                    &mut self.stroke,
+                    pv.as_ref(),
+                );
             }
         } else {
             self.doc.take_dirty();
@@ -1234,6 +1321,7 @@ impl PanoApp {
         for (k, b) in &self.brushes {
             self.s.brushes.insert(k.id().to_string(), *b);
         }
+        self.s.custom_brush = self.blib.selected.clone();
         self.s.save();
         if !self.is_modified() {
             self.discard_recovery();
@@ -1249,20 +1337,19 @@ impl PanoApp {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect()
         });
-        if let Some(first) = files.into_iter().next() {
-            // Projects always open. Images open as a new document when Shift is
-            // held or the current document has no real work in it.
-            let trivial_doc = !self.is_modified()
-                && self.doc.layers.len() <= 2
-                && self.doc.layers.iter().skip(1).all(|l| l.is_empty());
-            if crate::jobs::is_project(&first) || ctx.input(|i| i.modifiers.shift) || trivial_doc {
-                self.request(ctx, Pending::Open(Some(first)));
-            } else {
-                // Dropping an image onto a document with work adds it as a layer.
-                self.busy_label = Some("busy.importing");
-                self.jobs
-                    .import_layer(ctx, first, self.doc.width, self.doc.height);
-            }
+        if files.is_empty() {
+            return;
+        }
+        let (brushes, rest): (Vec<_>, Vec<_>) = files
+            .into_iter()
+            .partition(|p| crate::jobs::is_brush_file(p));
+        if !brushes.is_empty() {
+            self.busy_label = Some("busy.importing");
+            self.jobs.import_brushes(ctx, brushes);
+        }
+        if let Some(first) = rest.into_iter().next() {
+            let shift = ctx.input(|i| i.modifiers.shift);
+            self.open_or_place(ctx, first, shift);
         }
     }
 
@@ -1386,7 +1473,11 @@ impl eframe::App for PanoApp {
             }
         }
 
+        if self.tool == Tool::Paint(ToolKind::Custom) {
+            self.sync_tip();
+        }
         crate::ui::layout(self, ui, now);
+        crate::ui::place::panel(self, &ctx);
         crate::ui::dialogs::show_all(self, &ctx);
         crate::ui::overlay(self, &ctx, now);
 

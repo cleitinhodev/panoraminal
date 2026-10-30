@@ -29,6 +29,16 @@ pub enum JobResult {
     Autosaved {
         state: u64,
     },
+    /// An image decoded for placing on the sphere.
+    PlaceLoaded {
+        name: String,
+        img: panoraminal_core::place::PlaceImage,
+    },
+    /// Brushes read from one or more brush files.
+    BrushesImported {
+        brushes: Vec<panoraminal_io::brushes::CustomBrush>,
+        failed: Vec<(PathBuf, String)>,
+    },
     Recovered {
         snap: ProjectSnapshot,
     },
@@ -251,6 +261,65 @@ impl Jobs {
             }
         });
     }
+}
+
+impl Jobs {
+    /// Decodes an image file for placing (capped at [`crate::placing::MAX_PLACE_DIM`]).
+    pub fn place_image(&mut self, ctx: &eframe::egui::Context, path: PathBuf) {
+        self.spawn(ctx, move || {
+            let name = stem(&path);
+            match std::fs::read(&path)
+                .map_err(panoraminal_io::IoError::from)
+                .and_then(|b| panoraminal_io::import_image_bytes(&b, crate::placing::MAX_PLACE_DIM))
+            {
+                Ok(img) => JobResult::PlaceLoaded {
+                    name,
+                    img: panoraminal_core::place::PlaceImage::from_rgba8(
+                        img.width,
+                        img.height,
+                        &img.pixels,
+                    ),
+                },
+                Err(e) => JobResult::Failed {
+                    what: "import",
+                    path: Some(path),
+                    err: e.to_string(),
+                },
+            }
+        });
+    }
+
+    /// Reads brushes from ABR / GBR / GIH / image files.
+    pub fn import_brushes(&mut self, ctx: &eframe::egui::Context, paths: Vec<PathBuf>) {
+        self.spawn(ctx, move || {
+            let mut brushes = Vec::new();
+            let mut failed = Vec::new();
+            for p in paths {
+                match panoraminal_io::brushes::import_brush_file(&p) {
+                    Ok(v) if !v.is_empty() => brushes.extend(v),
+                    Ok(_) => failed.push((p, "no brushes found".into())),
+                    Err(e) => failed.push((p, e.to_string())),
+                }
+            }
+            JobResult::BrushesImported { brushes, failed }
+        });
+    }
+}
+
+fn stem(path: &std::path::Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().chars().take(60).collect())
+        .unwrap_or_else(|| "image".into())
+}
+
+/// Brush file (ABR / GBR / GIH). Plain images are only brushes when imported as such.
+pub fn is_brush_file(p: &std::path::Path) -> bool {
+    p.extension()
+        .map(|e| {
+            let e = e.to_string_lossy().to_lowercase();
+            e == "abr" || e == "gbr" || e == "gih"
+        })
+        .unwrap_or(false)
 }
 
 pub fn is_project(p: &std::path::Path) -> bool {

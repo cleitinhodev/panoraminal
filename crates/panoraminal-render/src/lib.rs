@@ -14,8 +14,10 @@
 
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
+use panoraminal_core::place::{Placement, Projection};
 use panoraminal_core::{BlendMode, Camera, Document, FlatView, IRect, LayerId, StrokeEngine};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 const MAX_PASSES: usize = panoraminal_core::MAX_LAYERS + 1;
 const UNIFORM_STRIDE: u64 = 256;
@@ -28,6 +30,30 @@ struct CompositeU {
     flags: u32,
     stroke_opacity: f32,
     color: [f32; 4],
+    p_mode: [f32; 4],
+    p_f: [f32; 4],
+    p_r: [f32; 4],
+    p_u: [f32; 4],
+    p_c: [f32; 4],
+}
+
+/// A floating image to preview on top of one layer (non-destructive).
+#[derive(Clone, Debug)]
+pub struct PlacePreview {
+    pub layer: LayerId,
+    pub placement: Placement,
+    /// Premultiplied RGBA8 pixels.
+    pub rgba: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    /// Changes whenever `rgba` changes (triggers a re-upload).
+    pub rev: u64,
+}
+
+struct PlaceState {
+    tex: Tex,
+    rev: u64,
+    last: Option<(LayerId, Placement)>,
 }
 
 #[repr(C)]
@@ -115,6 +141,7 @@ fn make_tex(
 struct ChainKey {
     layers: Vec<(LayerId, u32, BlendMode, bool)>,
     stroke: Option<(LayerId, [u8; 3], u32, bool, bool)>,
+    place: Option<LayerId>,
 }
 
 /// GPU state for one document. Stored in egui-wgpu's `CallbackResources`.
@@ -134,6 +161,9 @@ pub struct GpuCanvas {
     disp_ubuf: wgpu::Buffer,
     disp_bg: [wgpu::BindGroup; 2],
     sampler: wgpu::Sampler,
+    place_sampler: wgpu::Sampler,
+    place: PlaceState,
+    place_u: Option<(LayerId, Placement)>,
     srgb_target: bool,
     /// Statistics of the last [`GpuCanvas::sync`] (for the debug overlay).
     pub stats: SyncStats,
@@ -171,6 +201,22 @@ impl GpuCanvas {
                 tex_entry(0),
                 tex_entry(1),
                 tex_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -298,6 +344,27 @@ impl GpuCanvas {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let place_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("pano.place.sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let place = PlaceState {
+            tex: make_tex(
+                device,
+                "pano.place.dummy",
+                1,
+                1,
+                wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            ),
+            rev: u64::MAX,
+            last: None,
+        };
         let (mask, comp) = Self::make_targets(device, w, h);
         let disp_bg = Self::make_disp_bgs(device, &disp_bgl, &comp, &sampler, &disp_ubuf);
         Self {
@@ -316,6 +383,9 @@ impl GpuCanvas {
             disp_ubuf,
             disp_bg,
             sampler,
+            place_sampler,
+            place,
+            place_u: None,
             srgb_target: target_format.is_srgb(),
             stats: SyncStats::default(),
         }
@@ -431,6 +501,7 @@ impl GpuCanvas {
         queue: &wgpu::Queue,
         doc: &mut Document,
         stroke: &mut StrokeEngine,
+        place: Option<&PlacePreview>,
     ) {
         self.stats = SyncStats::default();
         if (doc.width, doc.height) != (self.w, self.h) {
@@ -522,6 +593,33 @@ impl GpuCanvas {
             }
         }
 
+        // Floating placed image: upload when new, recomposite old ∪ new bounds on change.
+        let place = place.filter(|p| doc.layer(p.layer).is_some() && p.width > 0 && p.height > 0);
+        if let Some(p) = place {
+            if p.rev != self.place.rev {
+                let t = make_tex(
+                    device,
+                    "pano.place",
+                    p.width,
+                    p.height,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                );
+                Self::upload_layer(queue, &t, &p.rgba, p.width, IRect::full(p.width, p.height));
+                self.place.tex = t;
+                self.place.rev = p.rev;
+                self.place.last = None;
+            }
+        }
+        let now = place.map(|p| (p.layer, p.placement));
+        if now != self.place.last {
+            for (_, pl) in self.place.last.iter().chain(now.iter()) {
+                regions.extend(pl.pixel_bounds(w, h));
+            }
+            self.place.last = now;
+        }
+        self.place_u = now;
+
         // Did the layer chain (order, visibility, props, stroke parameters) change?
         let key = ChainKey {
             layers: doc
@@ -542,6 +640,7 @@ impl GpuCanvas {
                     lock,
                 )
             }),
+            place: now.map(|(l, _)| l),
         };
         if self.key.as_ref() != Some(&key) {
             // A stroke starting/ending only affects its own area, which the mask
@@ -594,7 +693,7 @@ impl GpuCanvas {
                 blend: l.blend.shader_index(),
                 flags: 0,
                 stroke_opacity: 0.0,
-                color: [0.0; 4],
+                ..Zeroable::zeroed()
             };
             if let Some((sid, rgb, op, eraser, lock)) = key.stroke {
                 if sid == l.id {
@@ -612,6 +711,33 @@ impl GpuCanvas {
                         rgb[2] as f32 / 255.0,
                         1.0,
                     ];
+                }
+            }
+            if let Some((pid, pl)) = self.place_u {
+                if pid == l.id {
+                    flags |= 16;
+                    if l.alpha_locked {
+                        flags |= 8;
+                    }
+                    let fr = pl.frame();
+                    let v = |a: panoraminal_core::Vec3, w: f64| {
+                        [a.x as f32, a.y as f32, a.z as f32, w as f32]
+                    };
+                    u.p_mode = [
+                        if fr.projection == Projection::Gnomonic {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        fr.cos as f32,
+                        fr.sin as f32,
+                        pl.opacity,
+                    ];
+                    u.p_f = v(fr.f, fr.sx);
+                    u.p_r = v(fr.r, fr.sy);
+                    let flips = (pl.flip_x as u32) | ((pl.flip_y as u32) << 1);
+                    u.p_u = v(fr.u, flips as f64);
+                    u.p_c = [fr.c.0 as f32, fr.c.1 as f32, self.w as f32, self.h as f32];
                 }
             }
             u.flags = flags;
@@ -637,6 +763,14 @@ impl GpuCanvas {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(&self.mask.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&self.place.tex.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&self.place_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,

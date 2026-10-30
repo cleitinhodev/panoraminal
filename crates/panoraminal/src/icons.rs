@@ -76,6 +76,22 @@ pub enum Glyph {
     Undo,
     Redo,
     Clear,
+    CustomBrush,
+    Star,
+}
+
+/// A filled five-pointed star (inner pentagon + five convex spikes).
+fn star(fill: &dyn Fn(&[(f32, f32)]), cx: f32, cy: f32, r: f32) {
+    let at = |i: usize| {
+        let a = i as f32 * std::f32::consts::PI / 5.0 - std::f32::consts::FRAC_PI_2;
+        let rr = if i.is_multiple_of(2) { r } else { r * 0.42 };
+        (cx + a.cos() * rr, cy + a.sin() * rr)
+    };
+    let inner: Vec<(f32, f32)> = (0..5).map(|k| at(k * 2 + 1)).collect();
+    fill(&inner);
+    for k in 0..5 {
+        fill(&[at((k * 2 + 9) % 10), at(k * 2), at(k * 2 + 1)]);
+    }
 }
 
 pub fn draw(p: &Painter, rect: Rect, g: Glyph, color: Color32) {
@@ -125,6 +141,16 @@ pub fn draw(p: &Painter, rect: Rect, g: Glyph, color: Color32) {
                 (4.5, 18.0),
             ]);
         }
+        Glyph::CustomBrush => {
+            // A brush handle stamping a star-shaped tip.
+            line(&[(20.0, 3.5), (14.0, 9.5)]);
+            closed(&[(12.5, 8.5), (15.0, 11.0), (13.5, 12.5), (11.0, 10.0)]);
+            star(&fill, 8.0, 16.5, 5.5);
+            for (x, y) in [(16.5, 17.0), (18.5, 20.5), (14.0, 21.0)] {
+                p.circle_filled(pt(x, y), 1.0 * s, color);
+            }
+        }
+        Glyph::Star => star(&fill, 12.0, 12.5, 9.0),
         Glyph::Airbrush => {
             closed(&[(9.0, 9.0), (17.0, 9.0), (17.0, 14.0), (9.0, 14.0)]);
             line(&[(13.0, 14.0), (13.0, 20.0)]);

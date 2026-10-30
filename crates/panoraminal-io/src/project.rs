@@ -6,6 +6,8 @@
 //! manifest.json          format, version, size, layer list and properties
 //! layers/000.png …       one straight-alpha RGBA PNG per layer (bottom first)
 //! preview.jpg            small flattened preview (for file browsers / future use)
+//! brushes/library.json   optional: custom brushes embedded in the project (1.1+)
+//! brushes/000_0.png …    their tips (grayscale PNG)
 //! ```
 //!
 //! Legacy Paint360 projects (`.p360.json`, layers as PNG data URLs) are imported too.
@@ -29,6 +31,8 @@ pub struct ProjectSnapshot {
     pub height: u32,
     pub active_index: usize,
     pub layers: Vec<LayerSnapshot>,
+    /// Custom brushes embedded in the project (optional).
+    pub brushes: Vec<crate::brushes::CustomBrush>,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +63,7 @@ impl ProjectSnapshot {
                     pixels: l.pixels.clone(),
                 })
                 .collect(),
+            brushes: Vec::new(),
         }
     }
     pub fn into_document(self) -> Document {
@@ -95,6 +100,8 @@ struct Manifest {
     #[serde(default)]
     active_index: usize,
     layers: Vec<ManifestLayer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brushes: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,6 +167,7 @@ pub fn project_bytes(p: &ProjectSnapshot) -> Result<Vec<u8>> {
                     file: format!("layers/{i:03}.png"),
                 })
                 .collect(),
+            brushes: (!p.brushes.is_empty()).then(|| "brushes/library.json".to_string()),
         };
         zw.start_file("manifest.json", deflated)?;
         zw.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
@@ -172,6 +180,15 @@ pub fn project_bytes(p: &ProjectSnapshot) -> Result<Vec<u8>> {
         let prev = downsample(&p.flatten(), w, h, pw, ph);
         zw.start_file("preview.jpg", stored)?;
         zw.write_all(&encode_jpeg(&prev, pw, ph, 85, false)?)?;
+        if !p.brushes.is_empty() {
+            let (json, files) = crate::brushes::embed_brushes(&p.brushes)?;
+            zw.start_file("brushes/library.json", deflated)?;
+            zw.write_all(&json)?;
+            for (name, png) in files {
+                zw.start_file(name, stored)?;
+                zw.write_all(&png)?;
+            }
+        }
         zw.finish()?;
     }
     Ok(buf.into_inner())
@@ -264,11 +281,30 @@ fn load_zip<R: Read + Seek>(r: R) -> Result<ProjectSnapshot> {
             pixels: px?,
         });
     }
+    let mut brushes = Vec::new();
+    if let Some(bf) = m.brushes.as_deref() {
+        let mut json = Vec::new();
+        if z.by_name(bf)
+            .and_then(|mut f| Ok(f.read_to_end(&mut json)?))
+            .is_ok()
+        {
+            brushes = crate::brushes::unembed_brushes(&json, |n| {
+                if !n.starts_with("brushes/") {
+                    return None;
+                }
+                let mut b = Vec::new();
+                z.by_name(n).ok()?.read_to_end(&mut b).ok()?;
+                Some(b)
+            })
+            .unwrap_or_default();
+        }
+    }
     Ok(ProjectSnapshot {
         width: w,
         height: h,
         active_index: m.active_index,
         layers,
+        brushes,
     })
 }
 
@@ -340,6 +376,7 @@ fn load_legacy_json(bytes: &[u8]) -> Result<ProjectSnapshot> {
         height: p.height,
         active_index: ai,
         layers,
+        brushes: Vec::new(),
     })
 }
 
@@ -372,6 +409,22 @@ mod tests {
         assert_eq!(d2.layers[1].opacity, 0.5);
         assert_eq!(d2.flatten(None), d.flatten(None));
         assert_eq!(d2.active_index(), 1);
+    }
+
+    #[test]
+    fn embedded_brushes_roundtrip() {
+        let d = sample();
+        let mut snap = ProjectSnapshot::from_document(&d);
+        let tip = panoraminal_core::tip::TipImage::ellipse(12, 0.5, 0.3);
+        let mut b = crate::brushes::CustomBrush::new("Mine", vec![tip], 12.0);
+        b.dynamics.scatter = 2.0;
+        snap.brushes.push(b);
+        let bytes = project_bytes(&snap).unwrap();
+        let p = load_project_bytes(&bytes).unwrap();
+        assert_eq!(p.brushes, snap.brushes);
+        // projects without brushes carry none
+        let bytes = project_bytes(&ProjectSnapshot::from_document(&d)).unwrap();
+        assert!(load_project_bytes(&bytes).unwrap().brushes.is_empty());
     }
 
     #[test]

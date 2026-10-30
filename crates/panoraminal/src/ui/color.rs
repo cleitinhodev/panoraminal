@@ -5,6 +5,7 @@ use crate::app::{hex, parse_hex, PanoApp, Tool};
 use crate::theme::{self, with_alpha};
 use eframe::egui::ecolor::Hsva;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
+use panoraminal_core::ToolKind;
 use panoraminal_i18n::tr;
 
 fn rgb(c: [u8; 3]) -> Color32 {
@@ -231,11 +232,18 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
     match app.tool {
         Tool::Paint(kind) => {
             let pen_pressure = app.s.pen_pressure;
+            let custom = kind == ToolKind::Custom;
+            if custom {
+                super::brushlib::library(app, ui);
+                ui.add_space(4.0);
+            }
             let Some(b) = app.brush_mut() else { return };
-            // Preview of the brush tip.
-            let (r, _) =
-                ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::hover());
-            brush_preview(ui, r, b.size, b.hardness, b.opacity, kind.is_eraser(), &pal);
+            if !custom {
+                // Preview of the brush tip.
+                let (r, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::hover());
+                brush_preview(ui, r, b.size, b.hardness, b.opacity, kind.is_eraser(), &pal);
+            }
             slider_row(ui, tr("brush.size"), &mut b.size, 1.0..=1000.0, " px", true);
             let mut op = b.opacity * 100.0;
             if slider_row(ui, tr("brush.opacity"), &mut op, 1.0..=100.0, "%", false).changed() {
@@ -245,9 +253,12 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
             if slider_row(ui, tr("brush.flow"), &mut fl, 1.0..=100.0, "%", false).changed() {
                 b.flow = fl / 100.0;
             }
-            let mut hd = b.hardness * 100.0;
-            if slider_row(ui, tr("brush.hardness"), &mut hd, 0.0..=100.0, "%", false).changed() {
-                b.hardness = hd / 100.0;
+            if !custom {
+                let mut hd = b.hardness * 100.0;
+                if slider_row(ui, tr("brush.hardness"), &mut hd, 0.0..=100.0, "%", false).changed()
+                {
+                    b.hardness = hd / 100.0;
+                }
             }
             egui::CollapsingHeader::new(tr("brush.advanced"))
                 .id_salt("brush_adv")

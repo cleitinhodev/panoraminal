@@ -247,6 +247,15 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                     app.last_pointer = Some(*pos);
                     match button {
                         PointerButton::Primary if space => app.drag = Drag::Rotate,
+                        PointerButton::Primary if app.floating.is_some() => {
+                            match (super::place::hit_test(app, *pos), app.screen_to_dir(*pos)) {
+                                (Some(h), Some(d)) => {
+                                    super::place::begin_drag(app, h, d);
+                                    app.drag = Drag::Place;
+                                }
+                                _ => app.drag = Drag::Rotate,
+                            }
+                        }
                         PointerButton::Primary => {
                             let Some(d) = app.screen_to_dir(*pos) else {
                                 continue;
@@ -282,6 +291,14 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                                 app.pick_color(d);
                             }
                         }
+                        Drag::Place => {
+                            if let Some(d) = app.screen_to_dir(*pos) {
+                                let free = mods.shift;
+                                if let Some(f) = app.floating.as_mut() {
+                                    f.drag_to(d, free);
+                                }
+                            }
+                        }
                         Drag::Rotate => {
                             let dl = *pos - last;
                             match app.mode {
@@ -309,6 +326,10 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                         app.finish_stroke();
                     } else if app.drag == Drag::Pick {
                         app.commit_color();
+                    } else if app.drag == Drag::Place {
+                        if let Some(f) = app.floating.as_mut() {
+                            f.drag = None;
+                        }
                     }
                     app.drag = Drag::None;
                 }
@@ -325,6 +346,9 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         if app.drag != Drag::None && !ctx.input(|i| i.pointer.any_down()) {
             if app.drag == Drag::Paint {
                 app.finish_stroke();
+            }
+            if let Some(f) = app.floating.as_mut() {
+                f.drag = None;
             }
             app.drag = Drag::None;
         }
@@ -406,11 +430,21 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         .input(|i| i.pointer.hover_pos())
         .filter(|p| rect.contains(*p) && hovered);
     app.cursor_dir = ptr.and_then(|p| app.screen_to_dir(p));
+    let place_hover = if app.floating.is_some() {
+        match app.floating.as_ref().and_then(|f| f.drag) {
+            Some(d) => Some(d.handle),
+            None => ptr.and_then(|p| super::place::hit_test(app, p)),
+        }
+    } else {
+        None
+    };
     if hovered && !blocked {
         let icon = if app.drag == Drag::Rotate {
             CursorIcon::Grabbing
         } else if space {
             CursorIcon::Grab
+        } else if app.floating.is_some() {
+            super::place::cursor_for(place_hover, app.drag == Drag::Place)
         } else {
             match app.tool {
                 Tool::Paint(_) if mods.alt => CursorIcon::Crosshair,
@@ -420,12 +454,14 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         };
         ctx.set_cursor_icon(icon);
     }
-    if let (Some(p), Some(d), Tool::Paint(_)) = (ptr, app.cursor_dir, app.tool) {
+    super::place::draw(app, ui.painter(), place_hover);
+    let floating = app.floating.is_some();
+    if let (Some(p), Some(d), Tool::Paint(_), false) = (ptr, app.cursor_dir, app.tool, floating) {
         if !space && app.drag != Drag::Rotate && !mods.alt {
             draw_brush_ring(app, ui.painter(), p, d);
         }
     }
-    if let (Some(p), Tool::Eyedropper) = (ptr, app.tool) {
+    if let (Some(p), Tool::Eyedropper, false) = (ptr, app.tool, floating) {
         if let Some(d) = app.cursor_dir {
             let px = dir_to_px(d, app.doc.width, app.doc.height);
             let c = app.doc.composite_pixel(
@@ -450,7 +486,7 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         ptr,
         app.stroke.last_end,
         app.tool,
-        mods.shift && app.drag == Drag::None,
+        mods.shift && app.drag == Drag::None && !floating,
     ) {
         let mut pts = Vec::new();
         if let Some(b) = app.cursor_dir {

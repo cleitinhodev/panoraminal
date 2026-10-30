@@ -14,8 +14,10 @@ use crate::document::{Document, LayerId};
 use crate::history::{Edit, Tile};
 use crate::math::{angle_between, dir_to_px, slerp, Vec3};
 use crate::rect::{DirtyRegion, IRect};
+use crate::tip::{PreparedTip, Rng};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
+use std::sync::Arc;
 
 /// Maximum horizontal stretch `1/cos(lat)` applied near the poles.
 pub const MAX_STRETCH: f64 = 12.0;
@@ -32,14 +34,17 @@ pub enum ToolKind {
     /// Very soft, low-flow brush that builds up.
     Airbrush,
     Eraser,
+    /// Sampled tip from the brush library (Photoshop ABR, GIMP GBR/GIH, images).
+    Custom,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 4] = [
+    pub const ALL: [ToolKind; 5] = [
         ToolKind::Pen,
         ToolKind::Brush,
         ToolKind::Airbrush,
         ToolKind::Eraser,
+        ToolKind::Custom,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -47,6 +52,7 @@ impl ToolKind {
             ToolKind::Brush => "brush",
             ToolKind::Airbrush => "airbrush",
             ToolKind::Eraser => "eraser",
+            ToolKind::Custom => "custom",
         }
     }
     pub fn is_eraser(self) -> bool {
@@ -124,6 +130,13 @@ impl BrushSettings {
                 hardness: 0.8,
                 ..d
             },
+            ToolKind::Custom => Self {
+                size: 80.0,
+                hardness: 1.0,
+                spacing: 0.25,
+                smoothing: 0.15,
+                ..d
+            },
         }
     }
     pub fn clamp(&mut self) {
@@ -163,6 +176,12 @@ pub struct StrokeEngine {
     last: Vec3,
     last_p: f32,
     gap: f64,
+    tip: Option<Arc<PreparedTip>>,
+    rng: Rng,
+    seq: usize,
+    last_dab: Option<(f64, f64)>,
+    /// Seed of the jitter generator for the next stroke (strokes are reproducible).
+    pub seed: u64,
     /// Regions of the mask changed since the renderer last uploaded it.
     pub mask_dirty: DirtyRegion,
     /// End point of the previous committed stroke (for Shift+click straight lines).
@@ -195,6 +214,11 @@ impl StrokeEngine {
             last: Vec3::default(),
             last_p: 1.0,
             gap: 0.0,
+            tip: None,
+            rng: Rng::new(1),
+            seq: 0,
+            last_dab: None,
+            seed: 1,
             mask_dirty: DirtyRegion::default(),
             last_end: None,
         }
@@ -223,7 +247,16 @@ impl StrokeEngine {
     }
     /// Forgets document-specific state (call when the document is replaced).
     pub fn reset(&mut self) {
+        let tip = self.tip.take();
         *self = Self::new();
+        self.tip = tip;
+    }
+    /// Sets the sampled tip used by [`ToolKind::Custom`] strokes (`None` = round dab).
+    pub fn set_tip(&mut self, tip: Option<Arc<PreparedTip>>) {
+        self.tip = tip;
+    }
+    pub fn tip(&self) -> Option<&Arc<PreparedTip>> {
+        self.tip.as_ref()
     }
 
     fn ensure_buffers(&mut self, w: u32, h: u32) {
@@ -269,6 +302,10 @@ impl StrokeEngine {
         self.smooth_p = p;
         self.last = dir;
         self.last_p = p;
+        self.rng = Rng::new(self.seed);
+        self.seed = self.seed.wrapping_add(0x5851_F42D);
+        self.seq = 0;
+        self.last_dab = None;
         self.stamp(dir, p);
         self.gap = self.gap_for(p);
         true
@@ -344,6 +381,12 @@ impl StrokeEngine {
 
     /// Rasterizes one elliptical dab into the mask (wrapping horizontally at the seam).
     fn stamp(&mut self, dir: Vec3, pressure: f32) {
+        if self.tool == ToolKind::Custom {
+            if let Some(tip) = self.tip.clone() {
+                self.stamp_tip(&tip, dir, pressure);
+                return;
+            }
+        }
         let (w, h) = (self.w, self.h);
         let s = &self.settings;
         let pp = dir_to_px(dir, w, h);
@@ -406,8 +449,17 @@ impl StrokeEngine {
                 *m += a * (1.0 - *m);
             }
         }
-        // bookkeeping: dirty rects + touched tiles (split at the seam)
-        let yr = (y0 as u32, y1 as u32);
+        self.mark_box(x0, x1, y0, y1);
+        self.any_dab = true;
+    }
+
+    /// Marks mask rows `y0..y1` × columns `x0..x1` (may extend past the seam) dirty.
+    fn mark_box(&mut self, x0: i64, x1: i64, y0: i64, y1: i64) {
+        let w = self.w;
+        let yr = (y0.max(0) as u32, (y1.min(self.h as i64)) as u32);
+        if yr.1 <= yr.0 {
+            return;
+        }
         let mut mark = |xa: i64, xb: i64| {
             let xa = xa.clamp(0, w as i64) as u32;
             let xb = xb.clamp(0, w as i64) as u32;
@@ -433,7 +485,158 @@ impl StrokeEngine {
                 mark(0, x1 - w as i64);
             }
         }
-        self.any_dab = true;
+    }
+
+    /// Stamps a sampled tip (with its shape dynamics) centred on `dir`.
+    ///
+    /// The tip is rasterized in the local tangent frame: one tip "radius" spans `rx`
+    /// pixels horizontally (`r / cos(lat)` with polar correction) and `ry` vertically,
+    /// so stamps keep their shape on the sphere and wrap across the seam.
+    fn stamp_tip(&mut self, tip: &PreparedTip, dir: Vec3, pressure: f32) {
+        let (w, h) = (self.w, self.h);
+        let s = self.settings;
+        let dy = &tip.dynamics;
+        let pp = dir_to_px(dir, w, h);
+        let base_dia = (s.size * s.press_size(pressure)).max(0.5) as f64;
+        let stretch = if s.polar_correction {
+            1.0 / pp.lat.cos().max(1.0 / MAX_STRETCH)
+        } else {
+            1.0
+        };
+        let ky = 2.0 * h as f64 / w as f64;
+        // Stroke direction in the tangent frame (east, north), unit length.
+        let mut tdir = (1.0f64, 0.0f64);
+        if let Some((lx, ly)) = self.last_dab {
+            let mut ddx = pp.x - lx;
+            let wf = w as f64;
+            if ddx > wf / 2.0 {
+                ddx -= wf;
+            } else if ddx < -wf / 2.0 {
+                ddx += wf;
+            }
+            let (ex, ny) = (ddx / stretch, -(pp.y - ly) / ky);
+            let l = (ex * ex + ny * ny).sqrt();
+            if l > 1e-9 {
+                tdir = (ex / l, ny / l);
+            }
+        }
+        self.last_dab = Some((pp.x, pp.y));
+        let mut count = dy.count.max(1) as f32;
+        if dy.count_jitter > 0.0 {
+            count = (count * (1.0 - dy.count_jitter * self.rng.next_f32())).max(1.0);
+        }
+        let n_var = tip.variants.len();
+        for _ in 0..count.round() as u32 {
+            let rng = &mut self.rng;
+            // size / angle / roundness jitter
+            let mut size_f = 1.0f64;
+            if dy.size_jitter > 0.0 {
+                size_f = (1.0 - dy.size_jitter as f64 * rng.next_f32() as f64)
+                    .max(dy.min_diameter as f64);
+            }
+            let dia = (base_dia * size_f).max(0.5);
+            let r = dia / 2.0;
+            let mut ang = (dy.angle as f64).to_radians();
+            if dy.follow_direction {
+                ang += tdir.1.atan2(tdir.0);
+            }
+            if dy.angle_jitter > 0.0 {
+                ang += dy.angle_jitter as f64 * std::f64::consts::PI * rng.signed() as f64;
+            }
+            let mut round = dy.roundness as f64;
+            if dy.roundness_jitter > 0.0 {
+                round *= (1.0 - dy.roundness_jitter as f64 * rng.next_f32() as f64)
+                    .max(dy.min_roundness as f64);
+            }
+            let round = round.clamp(0.01, 1.0);
+            let flip_x = dy.flip_x ^ (dy.flip_x_jitter && rng.next_f32() < 0.5);
+            let flip_y = dy.flip_y ^ (dy.flip_y_jitter && rng.next_f32() < 0.5);
+            let mut alpha = s.flow;
+            if dy.flow_jitter > 0.0 {
+                alpha *= 1.0 - dy.flow_jitter * rng.next_f32();
+            }
+            if dy.opacity_jitter > 0.0 {
+                alpha *= 1.0 - dy.opacity_jitter * rng.next_f32();
+            }
+            if s.pressure_opacity {
+                alpha *= 0.05 + 0.95 * pressure;
+            }
+            // scattering (perpendicular to the stroke; optionally along it too)
+            let (mut cx, mut cy) = (pp.x, pp.y);
+            if dy.scatter > 0.0 {
+                let perp = (-tdir.1, tdir.0);
+                let a = dy.scatter as f64 * dia * 0.5 * rng.signed() as f64;
+                let (mut ex, mut ny) = (perp.0 * a, perp.1 * a);
+                if dy.scatter_both_axes {
+                    let b = dy.scatter as f64 * dia * 0.5 * rng.signed() as f64;
+                    ex += tdir.0 * b;
+                    ny += tdir.1 * b;
+                }
+                cx += ex * stretch;
+                cy = (cy - ny * ky).clamp(0.0, h as f64 - 0.001);
+            }
+            let variant = match dy.selection {
+                crate::tip::TipSelection::Sequential => self.seq,
+                crate::tip::TipSelection::Random => (rng.next_f32() * n_var as f32) as usize,
+            } % n_var;
+            self.seq = self.seq.wrapping_add(1);
+            if alpha <= 0.0 {
+                continue;
+            }
+            let img = tip.level(variant, dia);
+            // Map the tip's longest side onto the dab diameter.
+            let m = img.max_side() as f64;
+            let ext = (img.width as f64).hypot(img.height as f64) / m;
+            let rx = (r * stretch).max(0.5);
+            let ry = (r * ky).max(0.5);
+            let ex_x = (rx * ext).min(w as f64 / 2.0 - 1.0);
+            let ex_y = ry * ext;
+            let y0 = (cy - ex_y - 1.0).floor().max(0.0) as i64;
+            let y1 = (cy + ex_y + 1.0).ceil().min(h as f64) as i64;
+            let x0 = (cx - ex_x - 1.0).floor() as i64;
+            let x1 = (cx + ex_x + 1.0).ceil() as i64;
+            if y1 <= y0 {
+                continue;
+            }
+            let (sa, ca) = ang.sin_cos();
+            let half_m = m * 0.5;
+            let (tcx, tcy) = (img.width as f64 * 0.5, img.height as f64 * 0.5);
+            let small = ((rx * ry) / 0.25).min(1.0) as f32;
+            for y in y0..y1 {
+                let ny = -(y as f64 + 0.5 - cy) / ry;
+                let row = (y as u32 * w) as usize;
+                for x in x0..x1 {
+                    let ex = (x as f64 + 0.5 - cx) / rx;
+                    // rotate into the tip frame, undo roundness
+                    let mut a = ex * ca + ny * sa;
+                    let mut b = (-ex * sa + ny * ca) / round;
+                    if flip_x {
+                        a = -a;
+                    }
+                    if flip_y {
+                        b = -b;
+                    }
+                    let tx = tcx + a * half_m;
+                    let ty = tcy - b * half_m;
+                    if tx < -1.0 || ty < -1.0 || tx > img.width as f64 + 1.0 {
+                        continue;
+                    }
+                    if ty > img.height as f64 + 1.0 {
+                        continue;
+                    }
+                    let cov = img.sample(tx as f32, ty as f32);
+                    if cov <= 0.0 {
+                        continue;
+                    }
+                    let av = (cov * alpha * small).min(1.0);
+                    let xi = x.rem_euclid(w as i64) as usize;
+                    let mm = &mut self.mask[row + xi];
+                    *mm += av * (1.0 - *mm);
+                }
+            }
+            self.mark_box(x0, x1, y0, y1);
+            self.any_dab = true;
+        }
     }
 
     /// Aborts the stroke, discarding the mask.
@@ -736,5 +939,169 @@ mod tests {
         s.end(&mut d);
         let (x0, _, x1, _, _) = bbox(&d);
         assert!(x1 - x0 <= (12.3 * 58.0) as u32);
+    }
+
+    // ---- custom (sampled) tips -------------------------------------------------
+
+    fn bar_tip(dynamics: crate::tip::TipDynamics) -> std::sync::Arc<PreparedTip> {
+        // 64×8 horizontal bar
+        PreparedTip::new(
+            &[crate::tip::TipImage::new(64, 8, vec![255; 512])],
+            &dynamics,
+        )
+    }
+    fn custom_dab(tip: std::sync::Arc<PreparedTip>, lon: f64, lat: f64, polar: bool) -> Document {
+        let mut d = doc();
+        let mut s = StrokeEngine::new();
+        s.set_tip(Some(tip));
+        let mut b = hard(64.0, polar);
+        b.spacing = 0.25;
+        assert!(s.begin(
+            &d,
+            ToolKind::Custom,
+            b,
+            [255, 0, 0],
+            dir_from_lonlat(lon, lat),
+            1.0
+        ));
+        s.end(&mut d).unwrap();
+        d
+    }
+
+    #[test]
+    fn custom_tip_shape_and_angle() {
+        let d = custom_dab(bar_tip(Default::default()), PI, 0.0, true);
+        let (x0, y0, x1, y1, _) = bbox(&d);
+        let (bw, bh) = (x1 - x0 + 1, y1 - y0 + 1);
+        assert!((62..=67).contains(&bw), "bar width {bw}");
+        assert!((7..=11).contains(&bh), "bar height {bh}");
+        // rotated by 90° the bar stands upright
+        let dy = crate::tip::TipDynamics {
+            angle: 90.0,
+            ..Default::default()
+        };
+        let d = custom_dab(bar_tip(dy), PI, 0.0, true);
+        let (x0, y0, x1, y1, _) = bbox(&d);
+        assert!((x1 - x0 + 1) < 12 && (y1 - y0 + 1) > 60);
+        // roundness squashes the tip's height
+        let dy = crate::tip::TipDynamics {
+            roundness: 0.5,
+            ..Default::default()
+        };
+        let sq = PreparedTip::new(&[crate::tip::TipImage::new(32, 32, vec![255; 1024])], &dy);
+        let d = custom_dab(sq, PI, 0.0, true);
+        let (x0, y0, x1, y1, _) = bbox(&d);
+        let r = (x1 - x0 + 1) as f64 / (y1 - y0 + 1) as f64;
+        assert!((r - 2.0).abs() < 0.2, "roundness ratio {r}");
+    }
+
+    #[test]
+    fn custom_tip_polar_correction() {
+        let eq = custom_dab(bar_tip(Default::default()), PI, 0.0, true);
+        let hi = custom_dab(bar_tip(Default::default()), PI, 60f64.to_radians(), true);
+        let w_eq = {
+            let b = bbox(&eq);
+            b.2 - b.0 + 1
+        };
+        let (x0, y0, x1, y1, _) = bbox(&hi);
+        let w_hi = x1 - x0 + 1;
+        let r = w_hi as f64 / w_eq as f64;
+        assert!((r - 2.0).abs() < 0.1, "1/cos(60°) stretch, got {r}");
+        assert!((y1 - y0 + 1) < 12, "height unchanged near the pole");
+    }
+
+    #[test]
+    fn custom_tip_wraps_across_the_seam() {
+        let d = custom_dab(bar_tip(Default::default()), 0.0, 0.0, true);
+        let l = d.active_layer().unwrap();
+        let row = 512 * 2048;
+        assert!(l.pixels[(row * 4 + 3) as usize] > 200);
+        assert!(l.pixels[((row + 2047) * 4 + 3) as usize] > 200);
+        assert!(l.pixels[((row + 20) * 4 + 3) as usize] > 200);
+        assert!(l.pixels[((row + 2030) * 4 + 3) as usize] > 200);
+        assert_eq!(l.pixels[((row + 1024) * 4 + 3) as usize], 0);
+    }
+
+    #[test]
+    fn custom_tip_jitter_is_deterministic_and_scatter_spreads() {
+        let dy = crate::tip::TipDynamics {
+            scatter: 3.0,
+            size_jitter: 0.5,
+            angle_jitter: 1.0,
+            count: 3,
+            ..Default::default()
+        };
+        let run = |seed: u64| {
+            let mut d = doc();
+            let mut s = StrokeEngine::new();
+            s.seed = seed;
+            s.set_tip(Some(PreparedTip::new(
+                &[crate::tip::TipImage::ellipse(16, 1.0, 1.0)],
+                &dy,
+            )));
+            let b = BrushSettings {
+                spacing: 0.5,
+                ..hard(16.0, true)
+            };
+            let a = px_to_dir(800.0, 512.0, 2048, 1024);
+            s.begin(&d, ToolKind::Custom, b, [0, 0, 0], a, 1.0);
+            s.add_point(px_to_dir(1200.0, 512.0, 2048, 1024), 1.0, true);
+            s.end(&mut d).unwrap();
+            d.active_layer().unwrap().pixels.clone()
+        };
+        let a = run(42);
+        assert_eq!(a, run(42), "same seed → same stroke");
+        assert_ne!(a, run(43));
+        // scattering moves dabs away from the stroke line (y = 512) by up to 3×16/2 px
+        let mut far = 0;
+        for y in (512 - 30)..(512 + 30) {
+            if (y - 512i32).abs() < 10 {
+                continue;
+            }
+            for x in 800..1200 {
+                if a[((y * 2048 + x) * 4 + 3) as usize] > 0 {
+                    far += 1;
+                }
+            }
+        }
+        assert!(far > 50, "scatter must spread paint off the line ({far})");
+    }
+
+    #[test]
+    fn custom_tip_spacing_controls_dab_count() {
+        // A tiny dot tip; with spacing 2.0 (200 %) dabs are separated by gaps.
+        let dot = PreparedTip::new(
+            &[crate::tip::TipImage::ellipse(8, 1.0, 1.0)],
+            &Default::default(),
+        );
+        let mut d = doc();
+        let mut s = StrokeEngine::new();
+        s.set_tip(Some(dot));
+        let b = BrushSettings {
+            spacing: 2.0,
+            ..hard(8.0, true)
+        };
+        s.begin(
+            &d,
+            ToolKind::Custom,
+            b,
+            [0, 0, 0],
+            px_to_dir(1000.0, 512.0, 2048, 1024),
+            1.0,
+        );
+        s.add_point(px_to_dir(1160.0, 512.0, 2048, 1024), 1.0, true);
+        s.end(&mut d).unwrap();
+        let l = d.active_layer().unwrap();
+        let mut runs = 0;
+        let mut inside = false;
+        for x in 990..1175 {
+            let on = l.pixels[((512 * 2048 + x) * 4 + 3) as usize] > 100;
+            if on && !inside {
+                runs += 1;
+            }
+            inside = on;
+        }
+        // 160 px / (8 px × 2.0) = 10 gaps → 11 dabs
+        assert!((10..=12).contains(&runs), "dabs: {runs}");
     }
 }
