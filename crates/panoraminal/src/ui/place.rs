@@ -219,13 +219,15 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
         .id(egui::Id::unique("place_panel"))
         .collapsible(false)
         .resizable(false)
-        .default_pos(Pos2::new(rect.left() + 14.0, rect.top() + 14.0))
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .default_pos(Pos2::new(rect.left() + 14.0, rect.bottom() - 14.0))
         .default_width(260.0)
         .constrain_to(rect)
         .show(ctx, |ui| {
             let Some(f) = app.floating.as_mut() else {
                 return;
             };
+            ui.set_max_width(300.0);
             ui.label(
                 egui::RichText::new(format!("{} · {}×{}", f.name, f.img.width, f.img.height))
                     .size(12.0)
@@ -346,10 +348,13 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
                     cancel = true;
                 }
             });
-            ui.label(
-                egui::RichText::new(tr("place.hint"))
-                    .size(11.5)
-                    .color(pal.text_weak),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tr("place.hint"))
+                        .size(11.5)
+                        .color(pal.text_weak),
+                )
+                .wrap(),
             );
         });
     if let Some(p) = proj_change {

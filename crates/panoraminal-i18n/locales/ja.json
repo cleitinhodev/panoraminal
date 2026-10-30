@@ -256,7 +256,7 @@
   "panel.color": "カラー",
   "panel.layers": "レイヤー",
   "place.as_layer": "新規レイヤーとして配置",
-  "place.cancel": "キャンセル（Esc）",
+  "place.cancel": "キャンセル",
   "place.dialog_title": "画像を挿入",
   "place.flip_h": "左右反転",
   "place.flip_v": "上下反転",

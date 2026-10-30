@@ -256,7 +256,7 @@
   "panel.color": "颜色",
   "panel.layers": "图层",
   "place.as_layer": "作为新图层放置",
-  "place.cancel": "取消（Esc）",
+  "place.cancel": "取消",
   "place.dialog_title": "插入图像",
   "place.flip_h": "水平翻转",
   "place.flip_v": "垂直翻转",

@@ -256,7 +256,7 @@
   "panel.color": "Color",
   "panel.layers": "Layers",
   "place.as_layer": "Place as new layer",
-  "place.cancel": "Cancel (Esc)",
+  "place.cancel": "Cancel",
   "place.dialog_title": "Insert image",
   "place.flip_h": "Flip horizontally",
   "place.flip_v": "Flip vertically",

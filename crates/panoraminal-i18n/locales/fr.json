@@ -256,7 +256,7 @@
   "panel.color": "Couleur",
   "panel.layers": "Calques",
   "place.as_layer": "Placer sur un nouveau calque",
-  "place.cancel": "Annuler (Échap)",
+  "place.cancel": "Annuler",
   "place.dialog_title": "Insérer une image",
   "place.flip_h": "Retourner horizontalement",
   "place.flip_v": "Retourner verticalement",

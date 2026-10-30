@@ -361,17 +361,17 @@ impl PanoApp {
             let (_, r, u) = panoraminal_core::place::view_basis(f.p.center);
             if proj == Projection::Wrap {
                 // Show how a wrap patch bends with the sphere: lift it towards the sky.
-                f.p.half_w *= 0.9;
-                f.p.half_h *= 0.9;
-                f.p.center = (f.p.center + u * 0.32 + r * 0.22).normalize();
+                f.p.half_w *= 0.8;
+                f.p.half_h *= 0.8;
+                f.p.center = (f.p.center + u * 0.16 + r * 0.12).normalize();
             } else {
-                f.p.center = (f.p.center + r * 0.12).normalize();
+                f.p.center = (f.p.center + r * 0.55).normalize();
             }
             f.p.clamp();
         }
         if proj == Projection::Gnomonic && self.mode == ViewMode::Sphere {
             // Turn the camera so the projector's perspective is visible.
-            self.cam.lon += 28f64.to_radians();
+            self.cam.lon += 24f64.to_radians();
             self.cam.lat += 6f64.to_radians();
             self.cam.clamp();
         }
