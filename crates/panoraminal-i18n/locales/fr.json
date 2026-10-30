@@ -47,6 +47,7 @@
   "brushlib.angle": "Angle",
   "brushlib.angle_jitter": "Variation d’angle",
   "brushlib.both_axes": "Disperser sur les deux axes",
+  "brushlib.builtin": "intégré",
   "brushlib.category": "Catégorie",
   "brushlib.count": "Nombre",
   "brushlib.delete": "Supprimer la brosse",

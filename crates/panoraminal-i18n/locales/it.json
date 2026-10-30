@@ -47,6 +47,7 @@
   "brushlib.angle": "Angolo",
   "brushlib.angle_jitter": "Variazione angolo",
   "brushlib.both_axes": "Disperdi su entrambi gli assi",
+  "brushlib.builtin": "integrato",
   "brushlib.category": "Categoria",
   "brushlib.count": "Quantità",
   "brushlib.delete": "Elimina pennello",

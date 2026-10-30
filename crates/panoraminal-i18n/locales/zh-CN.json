@@ -47,6 +47,7 @@
   "brushlib.angle": "角度",
   "brushlib.angle_jitter": "角度抖动",
   "brushlib.both_axes": "双轴散布",
+  "brushlib.builtin": "内置",
   "brushlib.category": "类别",
   "brushlib.count": "数量",
   "brushlib.delete": "删除画笔",

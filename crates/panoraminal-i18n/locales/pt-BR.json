@@ -47,6 +47,7 @@
   "brushlib.angle": "Ângulo",
   "brushlib.angle_jitter": "Variação de ângulo",
   "brushlib.both_axes": "Dispersar nos dois eixos",
+  "brushlib.builtin": "embutido",
   "brushlib.category": "Categoria",
   "brushlib.count": "Quantidade",
   "brushlib.delete": "Excluir pincel",

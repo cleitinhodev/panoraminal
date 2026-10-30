@@ -47,6 +47,7 @@
   "brushlib.angle": "Angle",
   "brushlib.angle_jitter": "Angle jitter",
   "brushlib.both_axes": "Scatter on both axes",
+  "brushlib.builtin": "built-in",
   "brushlib.category": "Category",
   "brushlib.count": "Count",
   "brushlib.delete": "Delete brush",

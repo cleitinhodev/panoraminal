@@ -320,9 +320,19 @@ pub fn library(app: &mut PanoApp, ui: &mut egui::Ui) {
     }
     if !b.source.is_empty() {
         ui.label(
-            egui::RichText::new(trf("brushlib.source", &[("src", &b.source)]))
-                .size(11.0)
-                .color(pal.text_weak),
+            egui::RichText::new(trf(
+                "brushlib.source",
+                &[(
+                    "src",
+                    &if b.source == "built-in" {
+                        tr("brushlib.builtin")
+                    } else {
+                        b.source.as_str()
+                    },
+                )],
+            ))
+            .size(11.0)
+            .color(pal.text_weak),
         );
     }
     if save {

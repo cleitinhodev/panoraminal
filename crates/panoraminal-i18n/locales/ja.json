@@ -47,6 +47,7 @@
   "brushlib.angle": "角度",
   "brushlib.angle_jitter": "角度のジッター",
   "brushlib.both_axes": "両軸に散布",
+  "brushlib.builtin": "内蔵",
   "brushlib.category": "カテゴリ",
   "brushlib.count": "数",
   "brushlib.delete": "ブラシを削除",

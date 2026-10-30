@@ -47,6 +47,7 @@
   "brushlib.angle": "Winkel",
   "brushlib.angle_jitter": "Winkelvariation",
   "brushlib.both_axes": "Auf beiden Achsen streuen",
+  "brushlib.builtin": "integriert",
   "brushlib.category": "Kategorie",
   "brushlib.count": "Anzahl",
   "brushlib.delete": "Pinsel löschen",
