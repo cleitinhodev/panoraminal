@@ -3,6 +3,29 @@
 All notable changes to Panoraminal are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-10-30
+
+### Added
+- **Custom brush tool** (`C`) with a **brush library** panel: thumbnails, live preview stroke in the current colour, rename, categories, favourites (shown first), search and delete. Nine procedural built-in brushes (soft round, chalk, calligraphy, splatter, stars, grass, clouds, hatching, leaves).
+- **Brush import** (File → Import brushes…, `Ctrl+Shift+B`, or drop files on the window):
+  - **Photoshop `.abr`** v1/v2 (computed and sampled tips, PackBits) and v6+ (`samp` tips and `desc` presets: diameter, angle, roundness, spacing, hardness, flips, shape dynamics, scattering, count, transfer, pen-pressure control).
+  - **GIMP `.gbr`** (grayscale and colour) and **`.gih`** image pipes (every cell becomes a tip, cycled or random).
+  - **PNG / JPEG / WebP** images (alpha or darkness used as the mask).
+  - Unsupported Photoshop features (dual brush, texture, bristle/erodible tips, colour dynamics, wet edges, noise) are approximated or skipped and listed in a notice.
+- Brush **dynamics**: spacing, angle, roundness, size/angle/roundness jitter with minimum diameter, scatter (one or both axes) and count, opacity/flow jitter, random flips, follow stroke direction, pen pressure. Stamps are placed with sphere-correct orientation, so they stay consistent across the seam and at the poles.
+- The library is saved in the user data directory; brushes used in a project are **embedded in the `.pano` file** (Settings → Editor) and added to the library when the project is opened elsewhere.
+- **Place images in the scene**: File → Insert image… (`Ctrl+Shift+I`), drag & drop onto a document, or paste (`Ctrl+V` / `Ctrl+Shift+V`, image data or copied file paths).
+  - The image floats as a **non-destructive object** with on-canvas handles: move, uniform or free (`Shift`) scale, edge scale, rotate (`Shift` snaps to 15°), plus opacity, rotation, size and flip controls — in the sphere and the flat view.
+  - **Wrap** projection (a spherical patch that keeps its angular size) and **Persistent** projection (a gnomonic projector anchored in space, undistorted from its direction; *Re-aim to view* moves it to the current view).
+  - Live GPU preview through the compositor, correct across the seam and at the poles; full-quality, mip-filtered bake on **Merge** (`Enter`) or **Place as new layer**; `Esc` cancels; edits while floating have their own undo/redo, the merge is one undo step.
+  - Dropping a 2:1 image on an empty document (or holding `Shift`) still opens it as a panorama.
+- Help: custom brush tool, image placement and two new 360° tips. All new strings in the 8 languages.
+- Command line: `--tool <id>` and `--place-demo <wrap|gnomonic>` (used for screenshots).
+
+### Changed
+- Slider values show at most one decimal.
+- The release workflow publishes a single `SHA256SUMS.txt` covering every asset of the release (hand-uploaded and CI-built).
+
 ## [1.0.0] — 2026-10-29
 
 First release of **Panoraminal**, the successor of the Paint360 prototype, rewritten from scratch as a native application.
@@ -29,4 +52,5 @@ First release of **Panoraminal**, the successor of the Paint360 prototype, rewri
 - Packages: Windows installer (NSIS) and portable zip; Linux AppImage, `.deb` and `.tar.gz`; macOS app bundle (built by CI).
 - CI (tests, clippy, rustfmt) and tagged release workflows on GitHub Actions.
 
+[1.1.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.0.0

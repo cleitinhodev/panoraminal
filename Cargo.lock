@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "panoraminal"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "arboard",
  "directories",
@@ -2621,14 +2621,14 @@ dependencies = [
 
 [[package]]
 name = "panoraminal-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "panoraminal-i18n"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "serde_json",
  "sys-locale",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "panoraminal-io"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64",
  "image",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "panoraminal-render"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bytemuck",
  "egui",

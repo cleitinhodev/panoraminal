@@ -30,6 +30,8 @@ It is the successor of the *Paint360* prototype, rebuilt from scratch as a real 
 
 - **Two views** — *Sphere* (perspective camera, FOV up to 120°) and *Flat* (equirectangular with wrap-around preview). Toggle with `V`.
 - **Brush engine on the sphere** — pen, brush, airbrush and eraser; size, opacity, flow, hardness, spacing, smoothing, polar correction.
+- **Custom brushes** (new in 1.1) — a brush library with thumbnails, live preview stroke, rename, categories, favourites and search. Import **Photoshop `.abr`** (v1/v2 and v6+, sampled tips with their presets), **GIMP `.gbr` / `.gih`** and any **PNG / JPEG / WebP** as a tip. Dynamics: spacing, angle, roundness, size/angle/roundness jitter, scatter, count, opacity/flow jitter, random flips and pen pressure. Stamps are projected on the sphere, so they look right across the seam and at the poles. Brushes used in a project are embedded in the `.pano` file.
+- **Place images in the scene** (new in 1.1) — drop, paste or insert a photo/logo and it floats over the panorama as a non-destructive object: move, scale (uniform or free), rotate, flip and fade it with on-canvas handles in both views. Two projections: **Wrap** (bent onto the sphere like a sticker) and **Persistent** (a flat picture projected from the centre, undistorted from its anchor direction, with *Re-aim to view*). Live GPU preview, full-quality bake on `Enter`, *Place as new layer*, `Esc` to cancel, undo/redo.
 - **Pen pressure** for size and/or opacity (see [limitations](#known-limitations)).
 - **Straight lines** with `Shift`+click (great circles), **eyedropper** (`I` or `Alt`+click), **360°-aware flood fill** that wraps across the seam.
 - **Layers** — up to 64, with drag & drop reordering, rename, visibility, alpha lock, opacity and 9 blend modes (normal, multiply, screen, overlay, darken, lighten, add/glow, difference, soft light), live thumbnails.
@@ -45,6 +47,8 @@ It is the successor of the *Paint360* prototype, rebuilt from scratch as a real 
 
 | | |
 |---|---|
+| ![Custom brush library](docs/screenshots/custom-brushes.png) | ![Placing an image (Persistent projection)](docs/screenshots/place-persistent.png) |
+| ![Placing an image (Wrap projection)](docs/screenshots/place-wrap.png) | ![Brush library, light theme, Portuguese](docs/screenshots/custom-brushes-light-pt.png) |
 | ![Light theme, Portuguese](docs/screenshots/light-sphere.png) | ![Flat view](docs/screenshots/dark-flat.png) |
 | ![Help window](docs/screenshots/help-dark.png) | ![About window](docs/screenshots/about-light.png) |
 | ![Settings in Japanese](docs/screenshots/settings-ja.png) | |
@@ -68,7 +72,7 @@ A GPU with Vulkan, Metal, DirectX 12 or OpenGL 3.3+ is recommended. Panoraminal 
 | Tools | | Brush | |
 |---|---|---|---|
 | `P` Pen | `B` Brush | `[` / `]` Size − / + | `{` / `}` Hardness − / + |
-| `A` Airbrush | `E` Eraser | `Shift`+click Line from last point | `Alt`+click Pick colour |
+| `A` Airbrush · `C` Custom brush | `E` Eraser | `Shift`+click Line from last point | `Alt`+click Pick colour |
 | `I` Eyedropper | `F` Fill | `X` Swap colours | `Esc` Cancel stroke / close window |
 
 | File | | Edit & layers | |
@@ -76,7 +80,8 @@ A GPU with Vulkan, Metal, DirectX 12 or OpenGL 3.3+ is recommended. Panoraminal 
 | `Ctrl+N` New | `Ctrl+O` Open | `Ctrl+Z` Undo | `Ctrl+Shift+Z` / `Ctrl+Y` Redo |
 | `Ctrl+S` Save | `Ctrl+Shift+S` Save as | `Del` Clear layer | `Ctrl+Shift+N` New layer |
 | `Ctrl+E` Export PNG | `Ctrl+Shift+E` Export 360° JPEG | `Ctrl+J` Duplicate layer | `Ctrl+M` Merge down |
-| `Ctrl+I` Import as layer | `Ctrl+,` Settings | | |
+| `Ctrl+I` Import as layer | `Ctrl+,` Settings | `Ctrl+Shift+V` / `Ctrl+V` Paste image | `Enter` Merge placed image |
+| `Ctrl+Shift+I` Insert image | `Ctrl+Shift+B` Import brushes | `Esc` Cancel placement | |
 
 | View | |
 |---|---|
@@ -120,12 +125,15 @@ Packaging scripts live in [`packaging/`](packaging): `packaging/linux/build-pack
 panoraminal [FILE]                 open a .pano project or an image
   --lang <code>                    force a language (en, pt-BR, es, fr, de, it, ja, zh-CN)
   --theme <dark|light|system>      force a theme
+  --tool <pen|brush|airbrush|custom|eraser>   start with a tool
   --version, --help
 ```
 
 ## Known limitations
 
 - **Pen pressure** comes from the OS through winit. It works with Windows Ink / pointer-pen devices and touch-force devices; Wintab-only tablet drivers and many X11/Wayland tablets don't report pressure to winit yet — strokes then use full pressure.
+- **ABR import** reads sampled and computed tips and the common presets (see Features). Dual brush, texture, bristle/erodible tips, colour dynamics, wet edges and noise have no equivalent yet: they are skipped and listed in a notice on the brush. Colour tips are used as masks (painted with the current colour). The importer is tested with synthesized files; please open an issue with any `.abr` that doesn't load.
+- Placed images are limited to 4096 px on the longest side (larger images are downscaled).
 - Maximum document size is 8192 × 4096 (the GPU texture limit of most cards); 64 layers.
 - The macOS build is produced by CI and is not code-signed or notarised.
 - With a software renderer (llvmpipe, WARP) large documents are slow.

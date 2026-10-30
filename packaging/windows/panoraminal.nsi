@@ -1,5 +1,5 @@
 ; Panoraminal installer (NSIS 3, Modern UI 2)
-; Build: makensis -DVERSION=1.0.0 -DSRCDIR=<dir with panoraminal.exe> -DOUTFILE=<setup.exe> packaging/windows/panoraminal.nsi
+; Build: makensis -DVERSION=1.1.0 -DSRCDIR=<dir with panoraminal.exe> -DOUTFILE=<setup.exe> packaging/windows/panoraminal.nsi
 ; -DTARGET_AMD64 builds a native 64-bit installer (needs NSIS amd64 stubs, e.g. Debian/Ubuntu nsis).
 !ifdef TARGET_AMD64
   Target amd64-unicode
@@ -10,7 +10,7 @@
 !include "FileFunc.nsh"
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.1.0"
 !endif
 !ifndef SRCDIR
   !define SRCDIR "..\..\target\x86_64-pc-windows-msvc\release"
