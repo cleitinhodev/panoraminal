@@ -128,6 +128,7 @@ panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
 - Tamanho máximo do documento: 8192 × 4096 (limite de textura da maioria das GPUs); 64 camadas.
 - A versão para macOS é gerada pelo CI e não é assinada nem notarizada.
 - Com renderizador por software (llvmpipe, WARP), documentos grandes ficam lentos.
+- Ao iniciar, o Panoraminal verifica se a API gráfica consegue criar um dispositivo e, se não, tenta a próxima (DirectX 12 → Vulkan → OpenGL no Windows, Vulkan → OpenGL no Linux). Para forçar uma, defina `WGPU_BACKEND=vulkan`, `dx12`, `gl` ou `metal`.
 
 ## Traduções
 

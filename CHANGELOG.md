@@ -18,6 +18,7 @@ First release of **Panoraminal**, the successor of the Paint360 prototype, rewri
 - **`.pano` project format** (ZIP + PNG layers + JSON manifest); legacy Paint360 `.p360.json` projects are imported.
 - Import PNG / JPEG / WebP / BMP / TIFF as a document or as a new layer (drag & drop supported).
 - Export **PNG** and **360° JPEG with GPano XMP metadata** (recognised by Facebook, Google Photos and VR viewers).
+- Graphics backend probe at startup: if the preferred backend (e.g. DirectX 12) cannot create a device, Panoraminal falls back to Vulkan / OpenGL instead of exiting. `WGPU_BACKEND` still overrides it.
 - Rotate heading (horizontal offset) and horizontal flip of the whole panorama.
 - **Autosave & crash recovery**, unsaved-changes prompt on close / new / open.
 - Brand look derived from the app icon: **dark, light and system themes**, gradients, neon glow and animations — all of which can be reduced or **turned off** (respects the system "reduce motion" setting).

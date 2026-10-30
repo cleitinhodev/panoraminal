@@ -47,16 +47,72 @@ fn main() -> eframe::Result {
         viewport = viewport.with_resizable(false);
     }
 
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
         centered: true,
         persist_window: false,
         ..Default::default()
     };
+    if let Some(b) = probe_backends() {
+        if let egui_wgpu::WgpuSetup::CreateNew(ref mut c) = options.wgpu_options.wgpu_setup {
+            c.instance_descriptor.backends = b;
+        }
+    }
     eframe::run_native(
         APP_NAME,
         options,
         Box::new(move |cc| Ok(Box::new(app::PanoApp::new(cc, cli)))),
     )
+}
+
+/// Finds a graphics backend that can actually create a device.
+///
+/// wgpu picks the "best" backend first (DX12 on Windows), but some drivers,
+/// remote sessions and compatibility layers expose an adapter whose device
+/// creation then fails, which would make the app exit at startup. We try the
+/// backends one by one and hand eframe the first one that works. An explicit
+/// `WGPU_BACKEND` environment variable always wins.
+fn probe_backends() -> Option<egui_wgpu::wgpu::Backends> {
+    use egui_wgpu::wgpu;
+    if std::env::var_os("WGPU_BACKEND").is_some() {
+        return None;
+    }
+    let candidates: &[wgpu::Backends] = if cfg!(windows) {
+        &[
+            wgpu::Backends::DX12,
+            wgpu::Backends::VULKAN,
+            wgpu::Backends::GL,
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[wgpu::Backends::METAL]
+    } else {
+        &[wgpu::Backends::VULKAN, wgpu::Backends::GL]
+    };
+    if candidates.len() < 2 {
+        return None;
+    }
+    for &b in candidates {
+        let mut defaults = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+        defaults.instance_descriptor.backends = b;
+        let instance = wgpu::Instance::new(defaults.instance_descriptor);
+        let ok = pollster::block_on(async {
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: defaults.power_preference,
+                    ..Default::default()
+                })
+                .await
+                .ok()?;
+            let dd = (defaults.device_descriptor)(&adapter);
+            adapter.request_device(&dd).await.ok().map(|_| ())
+        })
+        .is_some();
+        if ok {
+            log::info!("using graphics backend {b:?}");
+            return Some(b);
+        }
+        log::warn!("graphics backend {b:?} unavailable, trying the next one");
+    }
+    None
 }

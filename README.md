@@ -129,6 +129,7 @@ panoraminal [FILE]                 open a .pano project or an image
 - Maximum document size is 8192 × 4096 (the GPU texture limit of most cards); 64 layers.
 - The macOS build is produced by CI and is not code-signed or notarised.
 - With a software renderer (llvmpipe, WARP) large documents are slow.
+- At startup Panoraminal checks that the graphics backend can create a device and falls back (DirectX 12 → Vulkan → OpenGL on Windows, Vulkan → OpenGL on Linux). To force one, set `WGPU_BACKEND=vulkan`, `dx12`, `gl` or `metal`.
 
 ## Translations
 

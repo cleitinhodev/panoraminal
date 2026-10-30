@@ -2611,6 +2611,7 @@ dependencies = [
  "panoraminal-i18n",
  "panoraminal-io",
  "panoraminal-render",
+ "pollster",
  "rfd",
  "serde",
  "serde_json",

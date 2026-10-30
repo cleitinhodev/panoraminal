@@ -110,7 +110,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: cd dist && sha256sum * > SHA256SUMS.txt && ls -la
+      # SHA256SUMS.txt may already be on the release (uploaded with locally built
+      # packages), so the CI-built files get their own checksum list.
+      - run: cd dist && sha256sum * > SHA256SUMS-ci.txt && ls -la
       - name: Upload to the release (created if missing)
         env:
           GH_TOKEN: ${{ github.token }}
