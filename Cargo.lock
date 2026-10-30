@@ -2601,6 +2601,7 @@ dependencies = [
 name = "panoraminal"
 version = "1.0.0"
 dependencies = [
+ "arboard",
  "directories",
  "eframe",
  "egui-wgpu",

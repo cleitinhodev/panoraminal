@@ -342,15 +342,30 @@ impl PanoApp {
         self.s.place_projection = proj;
         let (w, h) = (960u32, 640u32);
         let px = demo_picture(w, h);
+        // Float over a normal-blend layer so the screenshot shows the plain image.
+        if let Some(l) = self
+            .doc
+            .layers
+            .iter()
+            .rev()
+            .find(|l| l.blend == panoraminal_core::BlendMode::Normal && l.visible)
+        {
+            self.doc.active = l.id;
+        }
+        if proj == Projection::Wrap && self.mode == ViewMode::Sphere {
+            self.cam.fov = 100.0;
+        }
         self.begin_floating("demo".into(), PlaceImage::from_rgba8(w, h, &px));
         if let Some(f) = self.floating.as_mut() {
             f.p.rotation = 8f64.to_radians();
+            let (_, r, u) = panoraminal_core::place::view_basis(f.p.center);
             if proj == Projection::Wrap {
-                // Show how a wrap patch bends with the sphere: tilt it up towards the sky.
-                f.p.half_w *= 1.6;
-                f.p.half_h *= 1.6;
-                let (_, _, u) = panoraminal_core::place::view_basis(f.p.center);
-                f.p.center = (f.p.center + u * 0.45).normalize();
+                // Show how a wrap patch bends with the sphere: lift it towards the sky.
+                f.p.half_w *= 0.9;
+                f.p.half_h *= 0.9;
+                f.p.center = (f.p.center + u * 0.32 + r * 0.22).normalize();
+            } else {
+                f.p.center = (f.p.center + r * 0.12).normalize();
             }
             f.p.clamp();
         }

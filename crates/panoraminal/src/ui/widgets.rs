@@ -167,7 +167,9 @@ pub fn slider_row<N: egui::emath::Numeric>(
             egui::Label::new(egui::RichText::new(label).size(12.5)).truncate(),
         );
         ui.spacing_mut().slider_width = (ui.available_width() - 62.0).max(60.0);
-        let mut s = egui::Slider::new(value, range).suffix(suffix);
+        let mut s = egui::Slider::new(value, range)
+            .suffix(suffix)
+            .max_decimals(1);
         if log {
             s = s.logarithmic(true);
         }

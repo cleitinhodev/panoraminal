@@ -537,6 +537,13 @@ fn settings_window(app: &mut PanoApp, ctx: &egui::Context) {
                                     &mut s.confirm_on_close,
                                     tr("settings.confirm_close"),
                                 );
+                                toggle(
+                                    ui,
+                                    &pal,
+                                    &mut s.embed_brushes,
+                                    tr("settings.embed_brushes"),
+                                )
+                                .on_hover_text(tr("settings.embed_brushes_tip"));
                             });
                             ui.end_row();
                         });
