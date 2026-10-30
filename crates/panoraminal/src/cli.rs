@@ -18,6 +18,10 @@ pub struct Cli {
     pub view: Option<String>,
     pub no_splash: bool,
     pub help_tab: Option<usize>,
+    /// Initial tool id (pen, brush, airbrush, custom, eraser).
+    pub tool: Option<String>,
+    /// Float a generated demo image: wrap or gnomonic.
+    pub place_demo: Option<String>,
 }
 
 const USAGE: &str = "Panoraminal — paint 360° panoramas
@@ -37,6 +41,8 @@ OPTIONS:
     --window <help|about|settings|new|export>  Open a window at startup
     --frames <n>                  Frames to render before the screenshot (default 30)
     --size <WxH>                  Initial window size in points
+    --tool <id>                   Initial tool (pen, brush, airbrush, custom, eraser)
+    --place-demo <wrap|gnomonic>  Float a generated picture for placing (docs/tests)
     -h, --help                    Show this help
     -V, --version                 Show the version";
 
@@ -80,6 +86,8 @@ impl Cli {
                         h.parse().map_err(|_| "invalid --size")?,
                     ]);
                 }
+                "--tool" => c.tool = Some(val("--tool")?),
+                "--place-demo" => c.place_demo = Some(val("--place-demo")?),
                 "--demo" => c.demo = true,
                 "--no-splash" => c.no_splash = true,
                 s if s.starts_with('-') && s.len() > 1 && !std::path::Path::new(s).exists() => {

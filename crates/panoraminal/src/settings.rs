@@ -3,6 +3,7 @@
 use crate::theme::Glow;
 use panoraminal_core::document::Background;
 use panoraminal_core::fill::FillOptions;
+use panoraminal_core::place::Projection;
 use panoraminal_core::{BrushSettings, ToolKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -54,6 +55,12 @@ pub struct Settings {
     pub wheel_zoom_speed: f32,
     pub invert_drag: bool,
     pub confirm_on_close: bool,
+    /// Selected custom brush id.
+    pub custom_brush: Option<String>,
+    /// Embed the custom brushes used in a document when saving `.pano` files.
+    pub embed_brushes: bool,
+    /// Last projection used when placing an image.
+    pub place_projection: Projection,
 }
 
 impl Default for Settings {
@@ -84,6 +91,9 @@ impl Default for Settings {
             wheel_zoom_speed: 1.0,
             invert_drag: false,
             confirm_on_close: true,
+            custom_brush: None,
+            embed_brushes: true,
+            place_projection: Projection::Gnomonic,
         }
     }
 }

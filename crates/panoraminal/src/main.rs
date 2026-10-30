@@ -3,11 +3,14 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod app_ext;
+mod brushlib;
 mod cli;
 mod demo;
 mod fonts;
 mod icons;
 mod jobs;
+mod placing;
 mod settings;
 mod shortcuts;
 mod theme;
