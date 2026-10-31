@@ -13,6 +13,12 @@ struct U {
     p_r: vec4<f32>,      // right.xyz, sy
     p_u: vec4<f32>,      // up.xyz, flip bits (1 = x, 2 = y)
     p_c: vec4<f32>,      // plane centre (gnomonic), doc w, doc h
+    // Point-based distortion (see panoraminal_core::warp).
+    p_h0: vec4<f32>,     // inverse homography row 0, warp flags (1 pin, 2 mesh)
+    p_h1: vec4<f32>,
+    p_h2: vec4<f32>,
+    p_t: vec4<f32>,      // texture w, h, max mip level
+    p_mesh: array<vec4<f32>, 8>,  // 4×4 mesh points, two per vec4
 };
 
 @group(0) @binding(0) var prev_tex: texture_2d<f32>;
@@ -44,6 +50,74 @@ fn place_local(d: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(l.x / u.p_f.w, l.y / u.p_r.w);
 }
 
+fn mesh_pt(i: u32, j: u32) -> vec2<f32> {
+    let k = j * 4u + i;
+    let v = u.p_mesh[k / 2u];
+    if (k & 1u) == 0u { return v.xy; }
+    return v.zw;
+}
+
+fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 { return a.x * b.y - a.y * b.x; }
+
+// Inverse bilinear (see warp::inv_bilinear); z = 1 when inside the quad a b c d.
+fn inv_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> vec3<f32> {
+    let e = b - a;
+    let f = d - a;
+    let g = a - b + c - d;
+    let h = p - a;
+    let k2 = cross2(g, f);
+    let k1 = cross2(e, f) + cross2(h, g);
+    let k0 = cross2(h, e);
+    var vs = array<f32, 2>(-1.0, -1.0);
+    if abs(k2) < 1e-7 * max(abs(k1), 1e-20) {
+        vs[0] = -k0 / k1;
+    } else {
+        let w = k1 * k1 - 4.0 * k0 * k2;
+        if w < 0.0 { return vec3<f32>(0.0, 0.0, 0.0); }
+        let sw = sqrt(w);
+        vs[0] = (-k1 - sw) / (2.0 * k2);
+        vs[1] = (-k1 + sw) / (2.0 * k2);
+    }
+    let eps = 1e-4;
+    for (var i = 0; i < 2; i++) {
+        let v = vs[i];
+        if v >= -eps && v <= 1.0 + eps {
+            let den = e + g * v;
+            var uu: f32;
+            if abs(den.x) >= abs(den.y) { uu = (h.x - f.x * v) / den.x; } else { uu = (h.y - f.y * v) / den.y; }
+            if uu >= -eps && uu <= 1.0 + eps {
+                return vec3<f32>(clamp(uu, 0.0, 1.0), clamp(v, 0.0, 1.0), 1.0);
+            }
+        }
+    }
+    return vec3<f32>(0.0, 0.0, 0.0);
+}
+
+// Frame-local → image coordinates (z = 1 when valid).
+fn unwarp(l: vec2<f32>) -> vec3<f32> {
+    let flags = u32(u.p_h0.w + 0.5);
+    if flags == 0u { return vec3<f32>(l, 1.0); }
+    let w = dot(u.p_h2.xyz, vec3<f32>(l, 1.0));
+    if abs(w) < 1e-9 { return vec3<f32>(9.0, 9.0, 0.0); }
+    let t = vec2<f32>(dot(u.p_h0.xyz, vec3<f32>(l, 1.0)), dot(u.p_h1.xyz, vec3<f32>(l, 1.0))) / w;
+    if (flags & 2u) == 0u { return vec3<f32>(t, 1.0); }
+    for (var j = 0u; j < 3u; j++) {
+        for (var i = 0u; i < 3u; i++) {
+            let r = inv_bilinear(t, mesh_pt(i, j), mesh_pt(i + 1u, j), mesh_pt(i + 1u, j + 1u), mesh_pt(i, j + 1u));
+            if r.z > 0.5 {
+                let g = vec2<f32>(f32(i) + r.x, f32(j) + r.y) / 3.0;
+                return vec3<f32>(g.x * 2.0 - 1.0, 1.0 - g.y * 2.0, 1.0);
+            }
+        }
+    }
+    return vec3<f32>(9.0, 9.0, 0.0);
+}
+
+// Image coordinates of document pixel position px (z = 1 when valid).
+fn img_at(px: vec2<f32>) -> vec3<f32> {
+    return unwarp(place_local(doc_dir(px)));
+}
+
 fn doc_dir(px: vec2<f32>) -> vec3<f32> {
     let lon = px.x / u.p_c.z * 2.0 * PI;
     let lat = (0.5 - px.y / u.p_c.w) * PI;
@@ -56,15 +130,32 @@ fn doc_dir(px: vec2<f32>) -> vec3<f32> {
 fn placed(px: vec2<f32>) -> vec4<f32> {
     let flips = u32(u.p_u.w + 0.5);
     var acc = vec4<f32>(0.0);
+    // Mip level from the pixel footprint (distorted images only; otherwise the
+    // texture is a single, pre-downscaled level).
+    var lod = 0.0;
+    if u.p_t.z > 0.0 {
+        let c = img_at(px);
+        let a = img_at(px + vec2<f32>(1.0, 0.0));
+        let b = img_at(px + vec2<f32>(0.0, 1.0));
+        if c.z > 0.5 && a.z > 0.5 && b.z > 0.5 {
+            let s = u.p_t.xy * 0.5;
+            let jx = length((a.xy - c.xy) * s);
+            let jy = length((b.xy - c.xy) * s);
+            let major = max(jx, jy);
+            let minor = min(jx, jy);
+            lod = clamp(log2(max(max(major * 0.5, minor), 1.0)), 0.0, u.p_t.z);
+        }
+    }
     let offs = array<vec2<f32>, 4>(vec2<f32>(-0.25, -0.25), vec2<f32>(0.25, -0.25),
                                    vec2<f32>(-0.25, 0.25), vec2<f32>(0.25, 0.25));
     for (var k = 0; k < 4; k++) {
-        var l = place_local(doc_dir(px + offs[k]));
-        if abs(l.x) <= 1.0 && abs(l.y) <= 1.0 {
+        let li = img_at(px + offs[k]);
+        var l = li.xy;
+        if li.z > 0.5 && abs(l.x) <= 1.0 && abs(l.y) <= 1.0 {
             if (flips & 1u) != 0u { l.x = -l.x; }
             if (flips & 2u) != 0u { l.y = -l.y; }
             let uv = vec2<f32>((l.x + 1.0) * 0.5, (1.0 - l.y) * 0.5);
-            acc += textureSampleLevel(place_tex, place_samp, uv, 0.0) * 0.25;
+            acc += textureSampleLevel(place_tex, place_samp, uv, lod) * 0.25;
         }
     }
     return acc * u.p_mode.w;

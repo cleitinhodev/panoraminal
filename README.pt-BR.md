@@ -32,6 +32,7 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 - **Motor de pincel na esfera** — caneta, pincel, aerógrafo e borracha; tamanho, opacidade, fluxo, dureza, espaçamento, suavização e correção polar.
 - **Pincéis personalizados** (novo na 1.1) — biblioteca de pincéis com miniaturas, traço de prévia ao vivo, renomear, categorias, favoritos e busca. Importe **`.abr` do Photoshop** (v1/v2 e v6+, pontas amostradas com suas predefinições), **`.gbr` / `.gih` do GIMP** e qualquer **PNG / JPEG / WebP** como ponta. Dinâmica: espaçamento, ângulo, arredondamento, variação de tamanho/ângulo/arredondamento, dispersão, quantidade, variação de opacidade/fluxo, espelhamentos aleatórios e pressão da caneta. Os carimbos são projetados na esfera, então ficam corretos na emenda e nos polos. Os pincéis usados num projeto são incorporados ao arquivo `.pano`.
 - **Posicionar imagens na cena** (novo na 1.1) — solte, cole ou insira uma foto/logo e ela flutua sobre o panorama como um objeto não destrutivo: mova, escale (uniforme ou livre), gire, espelhe e ajuste a opacidade com alças na tela, nas duas vistas. Duas projeções: **Envolver** (curvada sobre a esfera como um adesivo) e **Persistente** (um quadro plano projetado do centro, sem distorção a partir da direção ancorada, com *Reapontar para a vista*). Prévia ao vivo na GPU, aplicação em qualidade total com `Enter`, *Posicionar como nova camada*, `Esc` para cancelar, desfazer/refazer.
+- **Distorcer / perspectiva** (novo na 1.2) — aperte `D` enquanto posiciona uma imagem e arraste os **quatro pinos dos cantos** até os cantos de uma parede, uma tela ou o chão: a imagem é mapeada com perspectiva real (homografia) e parece fazer parte do cenário. Na projeção **Persistente** as linhas retas continuam retas na esfera; `W` ativa uma **malha 4×4** para superfícies curvas. `Shift` trava um eixo, as alças das bordas movem dois pinos de uma vez, as coordenadas dos pinos podem ser digitadas, *Redefinir distorção* recomeça, e formas dobradas ou degeneradas são recusadas com um aviso. A distorção faz parte do desfazer do posicionamento e é mantida ao mover, escalar, girar e trocar de projeção.
 - **Pressão da caneta** no tamanho e/ou na opacidade (veja as [limitações](#limitações-conhecidas)).
 - **Linhas retas** com `Shift`+clique (círculos máximos), **conta-gotas** (`I` ou `Alt`+clique) e **balde de tinta 360°** que atravessa a emenda.
 - **Camadas** — até 64, reordenáveis por arrastar e soltar, renomear, visibilidade, trava de transparência, opacidade e 9 modos de mesclagem (normal, multiplicar, tela, sobrepor, escurecer, clarear, adição/brilho, diferença, luz suave), com miniaturas ao vivo.
@@ -47,6 +48,8 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 
 | | |
 |---|---|
+| ![Pinos nos cantos de uma parede (projeção Persistente)](docs/screenshots/place-distort-light-pt.png) | ![Mesclada na parede](docs/screenshots/place-distort-merged.png) |
+| ![Malha de distorção](docs/screenshots/place-distort-warp.png) | ![Pinos na vista plana](docs/screenshots/place-distort-flat.png) |
 | ![Biblioteca de pincéis](docs/screenshots/custom-brushes-light-pt.png) | ![Imagem posicionada (projeção Persistente)](docs/screenshots/place-persistent.png) |
 | ![Imagem posicionada (projeção Envolver)](docs/screenshots/place-wrap.png) | ![Pincéis personalizados](docs/screenshots/custom-brushes.png) |
 | ![Tema escuro](docs/screenshots/dark-sphere.png) | ![Vista plana](docs/screenshots/dark-flat.png) |
@@ -81,7 +84,7 @@ No macOS, `Ctrl` vira `⌘`. A lista completa está em **Ajuda → Atalhos** (`F
 | `Ctrl+S` Salvar | `Ctrl+Shift+S` Salvar como | `Del` Limpar camada | `Ctrl+Shift+N` Nova camada |
 | `Ctrl+E` Exportar PNG | `Ctrl+Shift+E` Exportar JPEG 360° | `Ctrl+J` Duplicar camada | `Ctrl+M` Mesclar abaixo |
 | `Ctrl+I` Importar como camada | `Ctrl+,` Configurações | `Ctrl+Shift+V` / `Ctrl+V` Colar imagem | `Enter` Mesclar imagem posicionada |
-| `Ctrl+Shift+I` Inserir imagem | `Ctrl+Shift+B` Importar pincéis | `Esc` Cancelar posicionamento | |
+| `Ctrl+Shift+I` Inserir imagem | `Ctrl+Shift+B` Importar pincéis | `Esc` Cancelar posicionamento | `D` Distorcer imagem posicionada · `W` Malha |
 
 | Vista | |
 |---|---|
@@ -125,6 +128,9 @@ panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
   --lang <código>                  força um idioma (en, pt-BR, es, fr, de, it, ja, zh-CN)
   --theme <dark|light|system>      força um tema
   --tool <pen|brush|airbrush|custom|eraser>   começa com uma ferramenta
+  --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
+                                   imagem de demonstração (wall* = presa a uma
+                                   parede de um quarto sintético; capturas de tela)
   --version, --help
 ```
 
@@ -132,6 +138,7 @@ panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
 
 - A **pressão da caneta** vem do sistema via winit. Funciona com Windows Ink / canetas do tipo "pointer" e dispositivos com força de toque; drivers de mesa digitalizadora apenas Wintab e muitas mesas no X11/Wayland ainda não informam pressão ao winit — nesse caso o traço usa pressão máxima.
 - A **importação de ABR** lê pontas amostradas e calculadas e as predefinições comuns (veja Recursos). Pincel duplo, textura, pontas de cerdas/erodíveis, dinâmica de cor, bordas molhadas e ruído ainda não têm equivalente: são ignorados e listados num aviso no pincel. Pontas coloridas viram máscaras (pintadas com a cor atual). O importador é testado com arquivos sintetizados; abra uma issue com qualquer `.abr` que não carregue.
+- **Distorção na projeção Envolver** aplica a homografia nas coordenadas angulares (tangentes) do recorte, então é só aproximadamente correta em perspectiva para recortes grandes; use **Persistente** para paredes e outras superfícies planas. A malha é uma grade fixa 4×4 (células bilineares); a prévia ao vivo de uma imagem distorcida usa no máximo 2048 px (a mesclagem usa a imagem inteira).
 - Imagens posicionadas são limitadas a 4096 px no lado maior (imagens maiores são reduzidas).
 - Tamanho máximo do documento: 8192 × 4096 (limite de textura da maioria das GPUs); 64 camadas.
 - A versão para macOS é gerada pelo CI e não é assinada nem notarizada.

@@ -3,6 +3,24 @@
 All notable changes to Panoraminal are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-10-31
+
+### Added
+- **Distort mode for placed images** — press `D` while an image is floating (or click *Distort* in the panel) and drag its **four corner pins** to fit it onto a wall, a screen, a floor or any flat surface in the panorama. The pins solve a **homography**, so the image gets a real perspective and looks like part of the scene.
+  - **Persistent** projection: the homography lives in the projector plane — straight lines stay straight on the sphere, so a picture pinned to the corners of a wall follows the wall exactly.
+  - **Wrap** projection: the homography is applied in the patch's local angular (tangent) coordinates (an approximation for large patches).
+  - **Mesh warp** (`W`, or *Warp* in the panel): a 4×4 grid of points on top of the perspective for gently curved surfaces; *Reset mesh*.
+  - `Shift` locks the drag to one axis; edge handles move two pins at once (`Shift`: perpendicular to the edge); dragging inside moves the image; *Pin coordinates* shows and edits the four pins numerically; *Reset distortion*.
+  - Folded (concave/self-intersecting) and collapsed shapes are refused: the last valid shape is kept and a warning is shown.
+  - Handles in the sphere and the flat view, across the seam; distortion is part of the placement's local undo/redo and is kept when moving, scaling, rotating, flipping or switching projection.
+  - Live GPU preview with a per-pixel inverse mapping and mipmapped sampling; the merge bakes with anisotropic, mip-filtered sampling (bicubic when magnified).
+- Help: distort mode and a new 360° tip; all new strings in the 8 languages.
+- Command line: `--place-demo wall | wall-warp | wall-merged` (a picture pinned onto a synthetic room, used for the screenshots).
+
+### Fixed
+- The canvas could keep a stale strip of a floating image after its preview texture changed (e.g. undoing a distortion).
+- A flat view set before the first frame is no longer reset by the initial fit.
+
 ## [1.1.0] — 2026-10-30
 
 ### Added
@@ -52,5 +70,6 @@ First release of **Panoraminal**, the successor of the Paint360 prototype, rewri
 - Packages: Windows installer (NSIS) and portable zip; Linux AppImage, `.deb` and `.tar.gz`; macOS app bundle (built by CI).
 - CI (tests, clippy, rustfmt) and tagged release workflows on GitHub Actions.
 
+[1.2.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.0.0

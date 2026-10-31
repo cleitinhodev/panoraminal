@@ -22,6 +22,7 @@ use crate::document::{Document, LayerId};
 use crate::history::{Edit, Tile};
 use crate::math::{angle_between, dir_to_px, px_to_dir, Vec3};
 use crate::rect::IRect;
+use crate::warp::{Distortion, Homography};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
@@ -57,6 +58,48 @@ pub struct Placement {
     pub opacity: f32,
     /// Projector axis (gnomonic mode).
     pub view: Vec3,
+    /// Point-based distortion (corner pin + mesh warp) in frame-local coordinates;
+    /// move / scale / rotate apply on top of it.
+    #[serde(default)]
+    pub warp: Distortion,
+}
+
+/// A [`Distortion`] with its homographies precomputed for per-pixel use.
+#[derive(Clone, Copy, Debug)]
+pub struct Warper {
+    pub d: Distortion,
+    pub h: Homography,
+    pub hinv: Homography,
+    pub identity: bool,
+}
+
+impl Warper {
+    pub fn new(d: &Distortion) -> Self {
+        let h = d.homography().unwrap_or(Homography::IDENTITY);
+        let hinv = h.inverse().unwrap_or(Homography::IDENTITY);
+        Self {
+            d: *d,
+            h,
+            hinv,
+            identity: d.is_identity(),
+        }
+    }
+    /// Frame-local → image coordinates.
+    #[inline]
+    pub fn inverse(&self, lx: f64, ly: f64) -> Option<(f64, f64)> {
+        if self.identity {
+            return Some((lx, ly));
+        }
+        self.d.inverse_with(&self.hinv, lx, ly)
+    }
+    /// Image → frame-local coordinates.
+    #[inline]
+    pub fn forward(&self, sx: f64, sy: f64) -> Option<(f64, f64)> {
+        if self.identity {
+            return Some((sx, sy));
+        }
+        self.d.forward_with(&self.h, sx, sy)
+    }
 }
 
 /// Orthonormal `(forward, right, up)` frame looking along `f` (same convention as
@@ -126,6 +169,7 @@ impl Placement {
             flip_y: false,
             opacity: 1.0,
             view: view.normalize(),
+            warp: Distortion::IDENTITY,
         };
         match projection {
             Projection::Wrap => {
@@ -217,6 +261,21 @@ impl Placement {
     pub fn dir_at(&self, nx: f64, ny: f64) -> Vec3 {
         self.frame().dir_at(nx, ny)
     }
+    /// Image coordinates (`[-1, 1]²` inside, +y up, before flips) of direction `d`,
+    /// including the distortion.
+    pub fn image_local(&self, d: Vec3) -> Option<(f64, f64)> {
+        let (x, y) = self.local(d)?;
+        Warper::new(&self.warp).inverse(x, y)
+    }
+    /// Direction of image coordinates `(sx, sy)`, including the distortion.
+    pub fn image_dir(&self, sx: f64, sy: f64) -> Option<Vec3> {
+        let (x, y) = Warper::new(&self.warp).forward(sx, sy)?;
+        Some(self.dir_at(x, y))
+    }
+    /// Whether a point-based distortion is active.
+    pub fn is_distorted(&self) -> bool {
+        !self.warp.is_identity()
+    }
     /// Texture coordinates (0–1, v down) of a normalized local point, honouring flips.
     pub fn uv(&self, nx: f64, ny: f64) -> (f64, f64) {
         let nx = if self.flip_x { -nx } else { nx };
@@ -296,6 +355,9 @@ impl Placement {
         let (mut rx, mut ry) = (0.0f64, 0.0f64);
         let dx = 2.0 / img_w.max(1) as f64;
         let dy = 2.0 / img_h.max(1) as f64;
+        let wp = Warper::new(&self.warp);
+        let fr = self.frame();
+        let at = |x: f64, y: f64| wp.forward(x, y).map(|(a, b)| fr.dir_at(a, b));
         for (nx, ny) in [
             (0.0, 0.0),
             (-0.95, -0.95),
@@ -303,9 +365,12 @@ impl Placement {
             (-0.95, 0.95),
             (0.95, 0.95),
         ] {
-            let a = self.dir_at(nx, ny);
-            let ax = angle_between(a, self.dir_at(nx + dx, ny)).max(1e-12);
-            let ay = angle_between(a, self.dir_at(nx, ny + dy)).max(1e-12);
+            let (Some(a), Some(bx), Some(by)) = (at(nx, ny), at(nx + dx, ny), at(nx, ny + dy))
+            else {
+                continue;
+            };
+            let ax = angle_between(a, bx).max(1e-12);
+            let ay = angle_between(a, by).max(1e-12);
             rx = rx.max(doc_ang / ax);
             ry = ry.max(doc_ang / ay);
         }
@@ -316,6 +381,7 @@ impl Placement {
     pub fn pixel_bounds(&self, w: u32, h: u32) -> Vec<IRect> {
         const G: usize = 32;
         let fr = self.frame();
+        let wp = Warper::new(&self.warp);
         let wf = w as f64;
         let mut xs = Vec::with_capacity((G + 1) * (G + 1));
         let (mut y0, mut y1) = (f64::MAX, f64::MIN);
@@ -324,7 +390,8 @@ impl Placement {
             for i in 0..=G {
                 let nx = -1.0 + 2.0 * i as f64 / G as f64;
                 let ny = -1.0 + 2.0 * j as f64 / G as f64;
-                let p = dir_to_px(fr.dir_at(nx, ny), w, h);
+                let (lx, ly) = wp.forward(nx, ny).unwrap_or((nx, ny));
+                let p = dir_to_px(fr.dir_at(lx, ly), w, h);
                 grid[j * (G + 1) + i] = (p.x, p.y);
                 xs.push(p.x);
                 y0 = y0.min(p.y);
@@ -354,6 +421,7 @@ impl Placement {
         let pad_y = sy * 0.5 + 2.0;
         let inside = |d: Vec3| {
             fr.local(d)
+                .and_then(|(x, y)| wp.inverse(x, y))
                 .map(|(x, y)| x.abs() <= 1.0 && y.abs() <= 1.0)
                 .unwrap_or(false)
         };
@@ -419,6 +487,14 @@ impl Placement {
         let fr = self.frame();
         let opacity = self.opacity;
         let (fx, fy) = (self.flip_x, self.flip_y);
+        // Distorted images are minified unevenly (foreshortening): sample a mip chain
+        // with a per-pixel, anisotropic footprint instead of a global prefilter.
+        let wp = Warper::new(&self.warp);
+        let mips = if wp.identity {
+            Vec::new()
+        } else {
+            mip_chain(img)
+        };
         let lay = doc.layer_mut(layer)?;
         let lock = lay.alpha_locked;
         // Undo tiles first.
@@ -456,11 +532,17 @@ impl Placement {
                 std::thread::scope(|s| {
                     for (ci, chunk) in out.chunks_mut(rows_per * rw).enumerate() {
                         let fr = &fr;
+                        let wp = &wp;
+                        let mips = &mips;
                         s.spawn(move || {
                             for (k, px) in chunk.iter_mut().enumerate() {
                                 let y = by + (ci * rows_per + k / rw) as u32;
                                 let x = r.x + (k % rw) as u32;
-                                *px = shade(fr, img, x, y, w, h, fx, fy);
+                                *px = if mips.is_empty() {
+                                    shade(fr, img, x, y, w, h, fx, fy)
+                                } else {
+                                    shade_warp(fr, wp, mips, x, y, w, h, fx, fy)
+                                };
                             }
                         });
                     }
@@ -625,6 +707,117 @@ fn shade(
     acc
 }
 
+/// Mip chain of `img` (level 0 = `img`), each level half the size of the previous.
+pub fn mip_chain(img: &PlaceImage) -> Vec<PlaceImage> {
+    let mut v = vec![img.clone()];
+    while v.len() < 16 {
+        let l = v.last().unwrap();
+        if l.width <= 1 && l.height <= 1 {
+            break;
+        }
+        let n = l.resized(l.width.div_ceil(2).max(1), l.height.div_ceil(2).max(1));
+        v.push(n);
+    }
+    v
+}
+
+/// Trilinear sample of a mip chain at level-0 pixel coordinates.
+fn sample_mip(mips: &[PlaceImage], x: f64, y: f64, lod: f64) -> [f32; 4] {
+    let top = (mips.len() - 1) as f64;
+    let lod = lod.clamp(0.0, top);
+    let l0 = lod.floor() as usize;
+    let t = (lod - l0 as f64) as f32;
+    let at = |l: usize| {
+        let m = &mips[l];
+        let kx = m.width as f64 / mips[0].width as f64;
+        let ky = m.height as f64 / mips[0].height as f64;
+        m.sample_bilinear((x * kx) as f32, (y * ky) as f32)
+    };
+    let a = at(l0);
+    if t <= 1e-4 || l0 + 1 >= mips.len() {
+        return a;
+    }
+    let b = at(l0 + 1);
+    std::array::from_fn(|i| a[i] * (1.0 - t) + b[i] * t)
+}
+
+/// Shades one document pixel of a distorted image: coverage from 2×2 subsamples,
+/// colour from an anisotropic (up to 8 taps along the major axis) trilinear lookup
+/// sized by the local Jacobian, bicubic where the image is magnified.
+#[allow(clippy::too_many_arguments)]
+fn shade_warp(
+    fr: &Frame,
+    wp: &Warper,
+    mips: &[PlaceImage],
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    fx: bool,
+    fy: bool,
+) -> [f32; 4] {
+    let (iw, ih) = (mips[0].width as f64, mips[0].height as f64);
+    let loc = |px: f64, py: f64| {
+        fr.local(px_to_dir(px, py, w, h))
+            .and_then(|(a, b)| wp.inverse(a, b))
+    };
+    // Image pixel coordinates (flips applied).
+    let to_img = |(nx, ny): (f64, f64)| -> (f64, f64) {
+        let nx = if fx { -nx } else { nx };
+        let ny = if fy { -ny } else { ny };
+        ((nx + 1.0) * 0.5 * iw, (1.0 - ny) * 0.5 * ih)
+    };
+    let inside = |l: &(f64, f64)| l.0.abs() <= 1.0 && l.1.abs() <= 1.0;
+    let (xf, yf) = (x as f64, y as f64);
+    let mut n = 0;
+    let mut first = None;
+    for (ox, oy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+        if let Some(l) = loc(xf + ox, yf + oy).filter(inside) {
+            n += 1;
+            first.get_or_insert(l);
+        }
+    }
+    let Some(first) = first else {
+        return [0.0; 4];
+    };
+    let c = loc(xf + 0.5, yf + 0.5).filter(inside).unwrap_or(first);
+    let (cx, cy) = to_img(c);
+    // Footprint of one document pixel in image pixels (central differences when the
+    // neighbours are mappable).
+    let diff = |dx: f64, dy: f64| -> Option<(f64, f64)> {
+        let a = loc(xf + 0.5 + dx, yf + 0.5 + dy).map(to_img)?;
+        let b = loc(xf + 0.5 - dx, yf + 0.5 - dy).map(to_img)?;
+        Some(((a.0 - b.0) * 0.5, (a.1 - b.1) * 0.5))
+    };
+    let jx = diff(1.0, 0.0).unwrap_or((0.0, 0.0));
+    let jy = diff(0.0, 1.0).unwrap_or((0.0, 0.0));
+    let lx = jx.0.hypot(jx.1);
+    let ly = jy.0.hypot(jy.1);
+    let (major, minor, axis) = if lx >= ly { (lx, ly, jx) } else { (ly, lx, jy) };
+    let col = if major <= 1.0 {
+        if n == 4 {
+            mips[0].sample_bicubic(cx as f32, cy as f32)
+        } else {
+            mips[0].sample_bilinear(cx as f32, cy as f32)
+        }
+    } else {
+        let taps = (major / minor.max(1.0)).ceil().clamp(1.0, 8.0);
+        let lod = (major / taps).max(minor).max(1.0).log2();
+        let k = taps as usize;
+        let mut acc = [0f32; 4];
+        for t in 0..k {
+            let f = (t as f64 + 0.5) / taps - 0.5;
+            let c = sample_mip(mips, cx + axis.0 * f, cy + axis.1 * f, lod);
+            for i in 0..4 {
+                acc[i] += c[i] / k as f32;
+            }
+        }
+        acc
+    };
+    let cov = n as f32 * 0.25;
+    col.map(|v| v * cov)
+}
+
 /// A premultiplied RGBA16 image ready to be placed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceImage {
@@ -753,6 +946,10 @@ impl PlaceImage {
     /// Downscales the image so it is not minified (more than 1:1) anywhere on the
     /// sphere when placed with `p` on a document `doc_w` pixels wide.
     pub fn prefiltered_for(&self, p: &Placement, doc_w: u32) -> PlaceImage {
+        if p.is_distorted() {
+            // The distorted bake filters per pixel from a mip chain.
+            return self.clone();
+        }
         let (rx, ry) = p.minification(self.width, self.height, doc_w);
         let nw = if rx > 1.0 {
             (self.width as f64 / rx).ceil() as u32
@@ -971,6 +1168,96 @@ mod tests {
         let v = dir_from_lonlat(0.0, 0.0);
         let p = Placement::new(Projection::Gnomonic, v, v, 1.0, 1.0, 0.5);
         assert!(p.local(v * -1.0).is_none());
+    }
+
+    #[test]
+    fn distorted_roundtrip_bounds_and_seam() {
+        let (w, h) = (1024, 512);
+        let c = dir_from_lonlat(0.0, 0.1);
+        for proj in [Projection::Wrap, Projection::Gnomonic] {
+            let mut p = Placement::new(proj, c, c, 1.0, 1.5, 0.5);
+            p.rotation = 0.3;
+            p.warp.corners = [[-0.6, 1.1], [1.3, 0.8], [1.0, -0.9], [-1.1, -0.6]];
+            p.warp.mesh[5][0] += 0.12;
+            assert!(p.warp.validate().is_ok());
+            assert!(p.is_distorted());
+            for k in 0..100 {
+                let sx = (k as f64 * 0.41).sin() * 0.98;
+                let sy = (k as f64 * 0.17).cos() * 0.98;
+                let d = p.image_dir(sx, sy).unwrap();
+                let (a, b) = p.image_local(d).unwrap();
+                assert!(
+                    (a - sx).abs() < 1e-6 && (b - sy).abs() < 1e-6,
+                    "{proj:?} {k}"
+                );
+            }
+            // Corners land on their pins.
+            for (k, s) in crate::warp::SQUARE.iter().enumerate() {
+                let d = p.image_dir(s[0], s[1]).unwrap();
+                let q = p.dir_at(p.warp.corners[k][0], p.warp.corners[k][1]);
+                assert!(angle_between(d, q) < 1e-9);
+            }
+            // Bounds still split at the seam and contain every image pixel.
+            let rs = p.pixel_bounds(w, h);
+            assert_eq!(rs.len(), 2, "{proj:?}: {rs:?}");
+            let mut hits = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let d = px_to_dir(x as f64 + 0.5, y as f64 + 0.5, w, h);
+                    if let Some((a, b)) = p.image_local(d) {
+                        if a.abs() <= 1.0 && b.abs() <= 1.0 {
+                            hits += 1;
+                            assert!(
+                                rs.iter().any(|r| x >= r.x
+                                    && x < r.right()
+                                    && y >= r.y
+                                    && y < r.bottom()),
+                                "{proj:?} pixel {x},{y} outside bounds"
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(hits > 1000);
+            // Transforms apply on top: moving keeps the distortion.
+            let mut q = p;
+            q.drag_move(&p, p.center, dir_from_lonlat(0.4, 0.1));
+            assert_eq!(q.warp, p.warp);
+            // Switching projection keeps it too.
+            let mut r = p;
+            r.set_projection(
+                if proj == Projection::Wrap {
+                    Projection::Gnomonic
+                } else {
+                    Projection::Wrap
+                },
+                c,
+            );
+            assert_eq!(r.warp, p.warp);
+        }
+    }
+
+    #[test]
+    fn gnomonic_corner_pin_keeps_lines_straight() {
+        // Seen from the projector, a pinned image is a homography of the image plane:
+        // the image's straight lines stay straight.
+        let v = dir_from_lonlat(0.3, 0.0);
+        let mut p = Placement::new(Projection::Gnomonic, v, v, 1.2, 1.0, 0.5);
+        p.warp.corners = [[-0.9, 1.3], [1.1, 0.7], [1.0, -0.6], [-0.95, -1.2]];
+        let fr = p.frame();
+        let plane = |d: Vec3| {
+            let z = d.dot(fr.f);
+            (d.dot(fr.r) / z, d.dot(fr.u) / z)
+        };
+        for sy in [-0.8, 0.0, 0.5] {
+            let a = plane(p.image_dir(-1.0, sy).unwrap());
+            let b = plane(p.image_dir(1.0, sy).unwrap());
+            for t in [-0.6, -0.1, 0.4, 0.9] {
+                let m = plane(p.image_dir(t, sy).unwrap());
+                let cr = (b.0 - a.0) * (m.1 - a.1) - (b.1 - a.1) * (m.0 - a.0);
+                assert!(cr.abs() < 1e-9, "{sy} {t} {cr}");
+            }
+        }
     }
 
     #[test]

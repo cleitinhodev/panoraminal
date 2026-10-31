@@ -27,6 +27,8 @@ pub enum Action {
     InsertImage,
     PasteImage,
     PlaceCommit,
+    PlaceDistort,
+    PlaceWarp,
     ImportBrushes,
     NewLayer,
     DuplicateLayer,
@@ -257,6 +259,18 @@ pub static TABLE: &[Shortcut] = &[
         action: Action::PlaceCommit,
         keys: &[k(NONE, Key::Enter)],
         label: "place.merge",
+        group: Group::Edit,
+    },
+    Shortcut {
+        action: Action::PlaceDistort,
+        keys: &[k(NONE, Key::D)],
+        label: "place.distort",
+        group: Group::Edit,
+    },
+    Shortcut {
+        action: Action::PlaceWarp,
+        keys: &[k(NONE, Key::W)],
+        label: "place.distort.warp",
         group: Group::Edit,
     },
     Shortcut {

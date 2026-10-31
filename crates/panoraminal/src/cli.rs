@@ -42,7 +42,9 @@ OPTIONS:
     --frames <n>                  Frames to render before the screenshot (default 30)
     --size <WxH>                  Initial window size in points
     --tool <id>                   Initial tool (pen, brush, airbrush, custom, eraser)
-    --place-demo <wrap|gnomonic>  Float a generated picture for placing (docs/tests)
+    --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
+                                  Float a generated picture for placing (docs/tests);
+                                  wall* = corner-pinned onto a synthetic room
     -h, --help                    Show this help
     -V, --version                 Show the version";
 

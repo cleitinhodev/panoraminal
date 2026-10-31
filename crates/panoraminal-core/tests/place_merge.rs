@@ -89,3 +89,85 @@ fn place_as_new_layer_is_one_undo_step() {
         "redo restores the image"
     );
 }
+
+/// Four solid quadrants: TL red, TR green, BR blue, BL yellow.
+fn quadrants(w: u32, h: u32) -> Vec<u8> {
+    let mut px = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            px.extend_from_slice(match (x < w / 2, y < h / 2) {
+                (true, true) => &[255, 0, 0, 255],
+                (false, true) => &[0, 255, 0, 255],
+                (false, false) => &[0, 0, 255, 255],
+                (true, false) => &[255, 255, 0, 255],
+            });
+        }
+    }
+    px
+}
+
+#[test]
+fn corner_pin_fits_a_wall() {
+    use panoraminal_core::math::Vec3;
+    let (w, h) = (2048u32, 1024u32);
+    // A planar wall rectangle x = 1 (seen from the room centre), off-axis in z and
+    // straddling the seam at lon = 0.
+    let wall = |a: f64, b: f64| Vec3::new(1.0, 0.1 + 0.45 * b, 0.35 + 0.6 * a).normalize();
+    let targets = [
+        wall(-1.0, 1.0),
+        wall(1.0, 1.0),
+        wall(1.0, -1.0),
+        wall(-1.0, -1.0),
+    ];
+    let colors: [[u8; 3]; 4] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+    let img = PlaceImage::from_rgba8(256, 128, &quadrants(256, 128));
+    for proj in [Projection::Gnomonic, Projection::Wrap] {
+        let mut doc = Document::new_blank(w, h, Background::Transparent, "bg", "paint");
+        let layer = doc.active;
+        // The projector looks somewhere else than the wall normal: the pin must
+        // still produce the wall's perspective.
+        let view = Vec3::new(1.0, 0.05, 0.6).normalize();
+        let mut p = Placement::new(proj, view, view, 1.2, 2.0, 0.3);
+        for (k, t) in targets.iter().enumerate() {
+            let (x, y) = p.local(*t).unwrap();
+            p.warp.corners[k] = [x, y];
+        }
+        p.warp.validate().expect("valid quad");
+        let pre = img.prefiltered_for(&p, w);
+        p.bake(&pre, &mut doc, layer).expect("baked");
+        let px = &doc.layer(layer).unwrap().pixels;
+        let at = |d: Vec3| {
+            let q = dir_to_px(d, w, h);
+            let i = (((q.y as u32).min(h - 1) * w + (q.x as u32) % w) * 4) as usize;
+            [px[i], px[i + 1], px[i + 2], px[i + 3]]
+        };
+        for (k, (a, b)) in [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            // Just inside the corner (wall coordinates): that quadrant's colour.
+            let c = at(wall(a * 0.95, b * 0.95));
+            assert!(c[3] > 250, "{proj:?} corner {k} alpha {c:?}");
+            for i in 0..3 {
+                assert!(
+                    (c[i] as i32 - colors[k][i] as i32).abs() < 40,
+                    "{proj:?} corner {k}: {c:?}"
+                );
+            }
+            // Just outside: untouched.
+            assert_eq!(at(wall(a * 1.06, b * 1.06))[3], 0, "{proj:?} outside {k}");
+        }
+        if proj == Projection::Gnomonic {
+            // Perspective-correct: the wall's centre is the image centre, and the
+            // wall's quarter lines are the image's quarter lines.
+            for (a, b) in [(0.0, 0.0), (0.5, 0.5), (-0.5, 0.25)] {
+                let (sx, sy) = p.image_local(wall(a, b)).unwrap();
+                assert!((sx - a).abs() < 1e-6 && (sy - b).abs() < 1e-6, "{sx} {sy}");
+            }
+        }
+        // The image crosses the seam: both sides have paint.
+        let row = dir_to_px(wall(0.0, 0.0), w, h).y as u32;
+        let painted = |x: u32| px[((row * w + x) * 4 + 3) as usize] > 0;
+        assert!(painted(2) && painted(w - 3), "{proj:?} seam");
+    }
+}

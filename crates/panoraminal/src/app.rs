@@ -409,7 +409,7 @@ impl PanoApp {
         self.s.push_swatch(self.primary);
     }
 
-    fn replace_document(&mut self, doc: Document, file: Option<PathBuf>) {
+    pub(crate) fn replace_document(&mut self, doc: Document, file: Option<PathBuf>) {
         self.stroke.reset();
         self.drag = Drag::None;
         self.doc = doc;
@@ -1096,6 +1096,22 @@ impl PanoApp {
             Action::PlaceCommit => {
                 if self.floating.is_some() {
                     self.commit_placement(ctx, false);
+                }
+            }
+            Action::PlaceDistort => {
+                if let Some(f) = self.floating.as_mut() {
+                    f.toggle_distort();
+                }
+            }
+            Action::PlaceWarp => {
+                if let Some(f) = self.floating.as_mut() {
+                    f.mode = if f.mode == crate::placing::EditMode::Warp {
+                        crate::placing::EditMode::Perspective
+                    } else {
+                        crate::placing::EditMode::Warp
+                    };
+                    f.drag = None;
+                    f.invalid = None;
                 }
             }
             Action::ImportBrushes => self.import_brushes_dialog(ctx),

@@ -182,7 +182,7 @@ fn tools_tab(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
 }
 
 fn tips_tab(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
-    for i in 1..=10 {
+    for i in 1..=11 {
         let key = format!("help.tip.{i}");
         ui.horizontal_top(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::hover());
