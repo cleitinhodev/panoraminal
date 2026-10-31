@@ -458,4 +458,56 @@ mod tests {
         assert_ne!(c2.rev, a.rev);
         assert!(c2.width > a.width);
     }
+
+    #[test]
+    fn pin_drag_rejects_invalid_and_undoes() {
+        for proj in [Projection::Wrap, Projection::Gnomonic] {
+            let c = Vec3::new(1.0, 0.0, 0.0);
+            let p = Placement::new(proj, c, c, 1.0, 2.0, 0.5);
+            let mut f = Floating::new(img(), "x".into(), p);
+            f.toggle_distort();
+            assert!(f.mode.is_distort());
+            // Pull the top-right pin (index 1) inwards.
+            f.checkpoint();
+            let s = f.p;
+            f.drag = Some(DragState {
+                handle: Handle::Pin(1),
+                start: s,
+                from: s.dir_at(1.0, 1.0),
+                local0: (1.0, 1.0),
+            });
+            f.drag_to(s.dir_at(0.6, 0.7), false);
+            let k = f.p.warp.corners[1];
+            assert!(
+                (k[0] - 0.6).abs() < 1e-6 && (k[1] - 0.7).abs() < 1e-6,
+                "{proj:?} {k:?}"
+            );
+            assert!(f.invalid.is_none() && f.p.is_distorted());
+            let good = f.p.warp;
+            // Dragging it past the opposite corner would fold the quad: rejected.
+            f.drag_to(s.dir_at(-1.5, -1.5), false);
+            assert!(f.invalid.is_some(), "{proj:?}");
+            assert_eq!(f.p.warp, good);
+            f.drag = None;
+            // Distortion survives a projection toggle and a move.
+            f.checkpoint();
+            f.p.set_projection(
+                match proj {
+                    Projection::Wrap => Projection::Gnomonic,
+                    Projection::Gnomonic => Projection::Wrap,
+                },
+                c,
+            );
+            assert_eq!(f.p.warp, good);
+            assert!(f.undo());
+            assert_eq!(f.p.projection, proj);
+            // Reset is undoable; undo restores the pinned shape.
+            f.reset_distortion();
+            assert!(!f.p.is_distorted());
+            assert!(f.undo());
+            assert_eq!(f.p.warp, good);
+            assert!(f.undo());
+            assert!(!f.p.is_distorted());
+        }
+    }
 }
