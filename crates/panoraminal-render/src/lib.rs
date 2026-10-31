@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_PASSES: usize = panoraminal_core::MAX_LAYERS + 1;
-const UNIFORM_STRIDE: u64 = 256;
+const UNIFORM_STRIDE: u64 = 512;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -35,6 +35,14 @@ struct CompositeU {
     p_r: [f32; 4],
     p_u: [f32; 4],
     p_c: [f32; 4],
+    /// Inverse corner-pin homography rows; `p_h0[3]` = warp flags (1 pin, 2 mesh).
+    p_h0: [f32; 4],
+    p_h1: [f32; 4],
+    p_h2: [f32; 4],
+    /// Texture width, height (texels), highest mip level, unused.
+    p_t: [f32; 4],
+    /// Mesh control points, two per vec4.
+    p_mesh: [[f32; 4]; 8],
 }
 
 /// A floating image to preview on top of one layer (non-destructive).
@@ -48,11 +56,17 @@ pub struct PlacePreview {
     pub height: u32,
     /// Changes whenever `rgba` changes (triggers a re-upload).
     pub rev: u64,
+    /// Extra mip levels after `rgba` (level k is `max(1, size >> k)`), used when the
+    /// image is distorted.
+    pub mips: Arc<Vec<Vec<u8>>>,
 }
 
 struct PlaceState {
     tex: Tex,
     rev: u64,
+    levels: u32,
+    tw: u32,
+    th: u32,
     last: Option<(LayerId, Placement)>,
 }
 
@@ -351,6 +365,7 @@ impl GpuCanvas {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let place = PlaceState {
@@ -363,6 +378,9 @@ impl GpuCanvas {
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             ),
             rev: u64::MAX,
+            levels: 1,
+            tw: 1,
+            th: 1,
             last: None,
         };
         let (mask, comp) = Self::make_targets(device, w, h);
@@ -597,15 +615,52 @@ impl GpuCanvas {
         let place = place.filter(|p| doc.layer(p.layer).is_some() && p.width > 0 && p.height > 0);
         if let Some(p) = place {
             if p.rev != self.place.rev {
-                let t = make_tex(
-                    device,
-                    "pano.place",
-                    p.width,
-                    p.height,
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                );
-                Self::upload_layer(queue, &t, &p.rgba, p.width, IRect::full(p.width, p.height));
+                let levels = 1 + p.mips.len() as u32;
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("pano.place"),
+                    size: wgpu::Extent3d {
+                        width: p.width,
+                        height: p.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: levels,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let t = Tex { tex, view };
+                for (k, px) in std::iter::once(&*p.rgba).chain(p.mips.iter()).enumerate() {
+                    let lw = (p.width >> k).max(1);
+                    let lh = (p.height >> k).max(1);
+                    if px.len() != (lw * lh * 4) as usize {
+                        continue;
+                    }
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &t.tex,
+                            mip_level: k as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        px,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(lw * 4),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d {
+                            width: lw,
+                            height: lh,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                self.place.levels = levels;
+                self.place.tw = p.width;
+                self.place.th = p.height;
                 self.place.tex = t;
                 self.place.rev = p.rev;
                 self.place.last = None;
@@ -738,6 +793,34 @@ impl GpuCanvas {
                     let flips = (pl.flip_x as u32) | ((pl.flip_y as u32) << 1);
                     u.p_u = v(fr.u, flips as f64);
                     u.p_c = [fr.c.0 as f32, fr.c.1 as f32, self.w as f32, self.h as f32];
+                    let wp = panoraminal_core::place::Warper::new(&pl.warp);
+                    let mut wflags = 0u32;
+                    if !wp.identity {
+                        if !pl.warp.perspective_is_identity() {
+                            wflags |= 1;
+                        }
+                        if pl.warp.has_mesh() {
+                            wflags |= 2;
+                        }
+                    }
+                    let hi = wp.hinv.0;
+                    u.p_h0 = [hi[0] as f32, hi[1] as f32, hi[2] as f32, wflags as f32];
+                    u.p_h1 = [hi[3] as f32, hi[4] as f32, hi[5] as f32, 0.0];
+                    u.p_h2 = [hi[6] as f32, hi[7] as f32, hi[8] as f32, 0.0];
+                    u.p_t = [
+                        self.place.tw as f32,
+                        self.place.th as f32,
+                        (self.place.levels.max(1) - 1) as f32,
+                        0.0,
+                    ];
+                    for (k, m) in pl.warp.mesh.chunks(2).enumerate() {
+                        u.p_mesh[k] = [
+                            m[0][0] as f32,
+                            m[0][1] as f32,
+                            m[1][0] as f32,
+                            m[1][1] as f32,
+                        ];
+                    }
                 }
             }
             u.flags = flags;

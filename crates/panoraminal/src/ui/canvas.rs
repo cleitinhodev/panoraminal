@@ -149,7 +149,11 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
     let rect = ui.max_rect();
     let first_layout = app.canvas_rect == Rect::NOTHING;
     app.canvas_rect = rect;
-    if first_layout && app.mode == ViewMode::Flat {
+    // Keep a flat view set up before the first frame (e.g. by a demo).
+    if first_layout
+        && app.mode == ViewMode::Flat
+        && app.flat == panoraminal_core::FlatView::default()
+    {
         app.flat = panoraminal_core::FlatView::fit(rect.width() as f64, rect.height() as f64);
     }
     let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());

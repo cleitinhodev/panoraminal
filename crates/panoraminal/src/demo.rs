@@ -229,3 +229,207 @@ pub fn build(w: u32, h: u32) -> Document {
     d.take_dirty();
     d
 }
+
+/// Half sizes of the synthetic room (metres; the camera is at the origin).
+const ROOM: [f64; 3] = [3.2, 1.6, 4.0];
+const CEIL: f64 = 1.2;
+
+/// The empty picture area on the far wall (`z = +ROOM[2]`): corners TL, TR, BR, BL.
+pub fn room_wall_target() -> [[f64; 3]; 4] {
+    let z = ROOM[2];
+    let (x0, x1, y0, y1) = (-1.25, 1.15, -0.35, 0.85);
+    [[x1, y1, z], [x0, y1, z], [x0, y0, z], [x1, y0, z]]
+}
+
+fn hash2(a: i64, b: i64) -> f64 {
+    let mut h = (a.wrapping_mul(374761393) ^ b.wrapping_mul(668265263)) as u64;
+    h = (h ^ (h >> 13)).wrapping_mul(1274126177);
+    ((h ^ (h >> 16)) & 0xffff) as f64 / 65535.0
+}
+
+fn smooth(e0: f64, e1: f64, x: f64) -> f64 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Linear-ish RGB (0–1) seen along direction `d` from the room centre.
+fn room_color(d: [f64; 3]) -> [f64; 3] {
+    let lim = [ROOM[0], if d[1] > 0.0 { CEIL } else { ROOM[1] }, ROOM[2]];
+    let mut t = f64::MAX;
+    let mut axis = 0;
+    for k in 0..3 {
+        if d[k].abs() > 1e-9 {
+            let tk = lim[k] / d[k].abs();
+            if tk < t {
+                t = tk;
+                axis = k;
+            }
+        }
+    }
+    let p = [d[0] * t, d[1] * t, d[2] * t];
+    // Ambient occlusion towards the room's edges.
+    let edge = |v: f64, lo: f64, hi: f64| smooth(0.0, 0.9, (v - lo).min(hi - v));
+    let ao_x = edge(p[0], -ROOM[0], ROOM[0]);
+    let ao_y = edge(p[1], -ROOM[1], CEIL);
+    let ao_z = edge(p[2], -ROOM[2], ROOM[2]);
+    let ao = match axis {
+        0 => ao_y * ao_z,
+        1 => ao_x * ao_z,
+        _ => ao_x * ao_y,
+    };
+    let ao = 0.55 + 0.45 * ao;
+    // A ceiling lamp.
+    let lamp = [0.0, CEIL - 0.05, 0.6];
+    let dl =
+        ((p[0] - lamp[0]).powi(2) + (p[1] - lamp[1]).powi(2) + (p[2] - lamp[2]).powi(2)).sqrt();
+    let light = 0.62 + 0.55 / (1.0 + dl * dl * 0.12);
+    let mut c = match axis {
+        1 if d[1] < 0.0 => {
+            // Wooden floor: planks along z.
+            let pw = 0.22;
+            let i = (p[0] / pw).floor() as i64;
+            let len = 1.6 + hash2(i, 7) * 0.8;
+            let j = ((p[2] + hash2(i, 3) * 3.0) / len).floor() as i64;
+            let v = hash2(i, j);
+            let grain = ((p[2] * 9.0 + v * 20.0).sin() * 0.5 + 0.5) * 0.06;
+            let fx = (p[0] / pw).fract();
+            let fz = ((p[2] + hash2(i, 3) * 3.0) / len).fract();
+            let seam = smooth(0.0, 0.03, fx.min(1.0 - fx)) * smooth(0.0, 0.01, fz.min(1.0 - fz));
+            let k = (0.78 + v * 0.22 - grain) * (0.55 + 0.45 * seam);
+            [0.52 * k, 0.34 * k, 0.2 * k]
+        }
+        1 => {
+            // Ceiling with the lamp.
+            let r = ((p[0] - lamp[0]).powi(2) + (p[2] - lamp[2]).powi(2)).sqrt();
+            if r < 0.22 {
+                [1.6, 1.5, 1.3]
+            } else {
+                let ring = if r < 0.27 { 0.85 } else { 1.0 };
+                [0.93 * ring, 0.92 * ring, 0.89 * ring]
+            }
+        }
+        _ => {
+            let (u, side) = if axis == 0 {
+                (p[2], if d[0] > 0.0 { 0 } else { 1 })
+            } else {
+                (p[0], if d[2] > 0.0 { 2 } else { 3 })
+            };
+            let y = p[1];
+            let base: [f64; 3] = match side {
+                2 => [0.55, 0.64, 0.55], // the picture wall: sage green
+                0 => [0.80, 0.74, 0.64],
+                1 => [0.78, 0.73, 0.66],
+                _ => [0.76, 0.72, 0.66],
+            };
+            let noise = (hash2((u * 40.0) as i64, (y * 40.0) as i64) - 0.5) * 0.025;
+            let mut c = base.map(|v| v + noise);
+            if y < -ROOM[1] + 0.14 {
+                c = [0.95, 0.94, 0.92]; // skirting board
+            } else if y < -ROOM[1] + 0.16 {
+                c = [0.6, 0.6, 0.58];
+            }
+            if y > CEIL - 0.08 {
+                c = [0.94, 0.93, 0.9]; // cornice
+            }
+            // Window on the left wall.
+            if side == 1 && (-1.4..1.0).contains(&u) && (-0.45..0.95).contains(&y) {
+                let fr = 0.06;
+                let in_glass =
+                    (-1.4 + fr..1.0 - fr).contains(&u) && (-0.45 + fr..0.95 - fr).contains(&y);
+                let mull = (u + 0.2).abs() < 0.025 || (y - 0.25).abs() < 0.025;
+                c = if in_glass && !mull {
+                    let s = smooth(-0.45, 0.95, y);
+                    [0.75 + 0.15 * s, 0.88 + 0.07 * s, 1.0 + 0.2 * s]
+                } else {
+                    [0.96, 0.96, 0.95]
+                };
+                return c.map(|v| v * 1.05);
+            }
+            // Door on the back wall.
+            if side == 3 && (0.6..1.5).contains(&u) && y < 0.55 {
+                let panel =
+                    ((u - 1.05).abs() < 0.34) && ((y - 0.25).abs() < 0.2 || (y + 0.6).abs() < 0.55);
+                c = if panel {
+                    [0.62, 0.46, 0.33]
+                } else {
+                    [0.68, 0.51, 0.37]
+                };
+                if (u - 1.38).abs() < 0.03 && (y + 0.45).abs() < 0.03 {
+                    c = [0.85, 0.75, 0.4];
+                }
+            }
+            // A thin shadow line around the empty picture area (where a frame hung).
+            if side == 2 {
+                let t = room_wall_target();
+                let (x0, x1, y0, y1) = (t[1][0], t[0][0], t[2][1], t[0][1]);
+                let dx = (u - x0).min(x1 - u);
+                let dy = (y - y0).min(y1 - y);
+                let out = dx.min(dy);
+                if (-0.05..0.0).contains(&out) {
+                    let k = 0.8 + 0.2 * smooth(-0.05, 0.0, -out);
+                    c = c.map(|v| v * k);
+                }
+                // Light shelf below.
+                if (x0 - 0.2..x1 + 0.2).contains(&u) && (y0 - 0.55..y0 - 0.5).contains(&y) {
+                    c = [0.36, 0.25, 0.17];
+                }
+            }
+            c
+        }
+    };
+    let k = ao * light;
+    c = c.map(|v| v * k);
+    c
+}
+
+/// An equirectangular 360° photo-like render of a simple room (docs screenshots and
+/// the wall-fit demo).
+pub fn room_panorama(w: u32, h: u32) -> Vec<u8> {
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 16);
+    let rows = (h as usize).div_ceil(threads);
+    std::thread::scope(|s| {
+        for (ci, chunk) in px.chunks_mut(rows * w as usize * 4).enumerate() {
+            s.spawn(move || {
+                for (k, out) in chunk.chunks_mut(4).enumerate() {
+                    let y = ci * rows + k / w as usize;
+                    let x = k % w as usize;
+                    let mut acc = [0.0f64; 3];
+                    for (ox, oy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                        let lon = (x as f64 + ox) / w as f64 * TAU;
+                        let lat = (0.5 - (y as f64 + oy) / h as f64) * PI;
+                        let d = dir_from_lonlat(lon, lat);
+                        let c = room_color([d.x, d.y, d.z]);
+                        for i in 0..3 {
+                            acc[i] += c[i] * 0.25;
+                        }
+                    }
+                    for i in 0..3 {
+                        // Soft tone curve.
+                        let v = acc[i] / (1.0 + acc[i] * 0.25) * 1.25;
+                        out[i] = (v.clamp(0.0, 1.0).powf(1.0 / 1.1) * 255.0 + 0.5) as u8;
+                    }
+                    out[3] = 255;
+                }
+            });
+        }
+    });
+    px
+}
+
+/// A document with the room panorama as background and an empty layer above it.
+pub fn room_document(w: u32, h: u32) -> Document {
+    let mut d = Document::new_blank(
+        w,
+        h,
+        Background::White,
+        tr("layer.background"),
+        &panoraminal_i18n::trf("layer.default_name", &[("n", &1)]),
+    );
+    let px = room_panorama(w, h);
+    d.layers[0].pixels.copy_from_slice(&px);
+    d
+}

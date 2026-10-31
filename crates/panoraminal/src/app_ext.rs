@@ -334,6 +334,9 @@ impl PanoApp {
 
     /// `--place-demo wrap|gnomonic`: floats a generated picture (docs screenshots).
     pub fn place_demo(&mut self, mode: &str) {
+        if mode.starts_with("wall") {
+            return self.wall_demo(mode);
+        }
         let proj = if mode.eq_ignore_ascii_case("wrap") {
             Projection::Wrap
         } else {
@@ -374,6 +377,72 @@ impl PanoApp {
             self.cam.lon += 24f64.to_radians();
             self.cam.lat += 6f64.to_radians();
             self.cam.clamp();
+        }
+    }
+}
+
+impl PanoApp {
+    /// `--place-demo wall|wall-warp|wall-merged`: a synthetic room with the demo
+    /// picture corner-pinned onto its far wall (distort mode, docs screenshots).
+    fn wall_demo(&mut self, mode: &str) {
+        let (dw, dh) = (4096u32, 2048u32);
+        let doc = crate::demo::room_document(dw, dh);
+        self.replace_document(doc, None);
+        // Look at the wall from the side so the perspective is obvious.
+        let t = crate::demo::room_wall_target();
+        let dir = |p: [f64; 3]| Vec3::new(p[0], p[1], p[2]).normalize();
+        let mid = dir([
+            (t[0][0] + t[1][0]) * 0.5,
+            (t[0][1] + t[2][1]) * 0.5,
+            t[0][2],
+        ]);
+        let (lon, lat) = panoraminal_core::math::lonlat_of(mid);
+        self.cam.lon = lon - 24f64.to_radians();
+        self.cam.lat = lat - 6f64.to_radians();
+        self.cam.fov = 88.0;
+        self.cam.clamp();
+        // Flat view: centre on the wall, a bit zoomed in.
+        let px = panoraminal_core::math::dir_to_px(mid, dw, dh);
+        self.flat.cx = px.u - 0.06;
+        self.flat.cy = 0.5;
+        self.flat.zoom = 2.2;
+        self.s.place_projection = Projection::Gnomonic;
+        let (w, h) = (960u32, 640u32);
+        let px = demo_picture(w, h);
+        self.begin_floating("demo".into(), PlaceImage::from_rgba8(w, h, &px));
+        let Some(f) = self.floating.as_mut() else {
+            return;
+        };
+        // A projector aimed at the wall; pins on the wall's empty picture area.
+        f.p.view = mid;
+        f.p.center = mid;
+        f.p.clamp();
+        let mut warp = f.p.warp;
+        for (k, c) in t.iter().enumerate() {
+            if let Some((x, y)) = f.p.local(dir(*c)) {
+                warp.corners[k] = [x, y];
+            }
+        }
+        if warp.validate().is_ok() {
+            f.p.warp = warp;
+        }
+        f.mode = crate::placing::EditMode::Perspective;
+        if mode == "wall-warp" {
+            // A gentle bulge to show the mesh.
+            f.mode = crate::placing::EditMode::Warp;
+            let mut w2 = f.p.warp;
+            for k in [5usize, 6, 9, 10] {
+                w2.mesh[k][1] += 0.06;
+            }
+            if w2.validate().is_ok() {
+                f.p.warp = w2;
+            }
+        }
+        if mode == "wall-merged" {
+            let p = f.p;
+            let img = f.img.prefiltered_for(&p, self.doc.width);
+            self.floating = None;
+            place::commit(&mut self.doc, &mut self.hist, &p, &img, None);
         }
     }
 }

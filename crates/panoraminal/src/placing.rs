@@ -1,6 +1,7 @@
 //! A floating image being placed on the sphere (before it is merged).
 
-use panoraminal_core::place::{PlaceImage, Placement, Projection};
+use panoraminal_core::place::{PlaceImage, Placement, Projection, Warper};
+use panoraminal_core::warp::{Distortion, Invalid, MESH_LEN};
 use panoraminal_core::{LayerId, Vec3};
 use panoraminal_render::PlacePreview;
 use std::sync::Arc;
@@ -16,6 +17,31 @@ pub enum Handle {
     /// Edge midpoint `i` (top, right, bottom, left): one-axis scale.
     Edge(usize),
     Rotate,
+    /// Distort mode: corner pin `i` (TL, TR, BR, BL).
+    Pin(usize),
+    /// Distort mode: the edge after pin `i` (top, right, bottom, left), moving both
+    /// of its pins.
+    PinEdge(usize),
+    /// Warp mode: mesh control point `k` (row-major from the top).
+    Mesh(usize),
+}
+
+/// What the on-canvas handles edit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EditMode {
+    /// Move / scale / rotate.
+    #[default]
+    Transform,
+    /// Corner-pin perspective (4 pins + edges).
+    Perspective,
+    /// Mesh warp (4×4 control points) on top of the perspective.
+    Warp,
+}
+
+impl EditMode {
+    pub fn is_distort(self) -> bool {
+        self != EditMode::Transform
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -32,6 +58,9 @@ pub struct Floating {
     pub name: String,
     pub p: Placement,
     pub drag: Option<DragState>,
+    pub mode: EditMode,
+    /// Set when the last distortion drag was rejected (shape kept at the last valid one).
+    pub invalid: Option<Invalid>,
     undo: Vec<Placement>,
     redo: Vec<Placement>,
     preview: Arc<Vec<u8>>,
@@ -39,7 +68,12 @@ pub struct Floating {
     ph: u32,
     level: i32,
     rev: u64,
+    mips: Arc<Vec<Vec<u8>>>,
 }
+
+const DISTORTED_LEVEL: i32 = i32::MAX;
+/// Longest side of the distorted GPU preview's base level.
+const PREVIEW_DISTORT_DIM: u32 = 2048;
 
 static REV: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -67,6 +101,8 @@ impl Floating {
             name,
             p,
             drag: None,
+            mode: EditMode::Transform,
+            invalid: None,
             undo: Vec::new(),
             redo: Vec::new(),
             preview: Arc::new(Vec::new()),
@@ -74,6 +110,7 @@ impl Floating {
             ph: 0,
             level: i32::MIN,
             rev: 0,
+            mips: Arc::new(Vec::new()),
         };
         f.p.clamp();
         f
@@ -122,13 +159,65 @@ impl Floating {
         }
     }
 
+    /// Toggles distort mode (`D`): Transform ↔ the last distort sub-mode.
+    pub fn toggle_distort(&mut self) {
+        self.mode = if self.mode.is_distort() {
+            EditMode::Transform
+        } else {
+            EditMode::Perspective
+        };
+        self.drag = None;
+        self.invalid = None;
+    }
+
+    /// Clears the distortion (one undo step).
+    pub fn reset_distortion(&mut self) {
+        if self.p.is_distorted() {
+            self.checkpoint();
+            self.p.warp = Distortion::IDENTITY;
+        }
+        self.invalid = None;
+    }
+
     /// The GPU preview of the floating image, downscaled to its on-sphere size so the
-    /// single-level texture does not alias.
+    /// single-level texture does not alias. A distorted image is minified unevenly,
+    /// so it gets the full image plus a mip chain instead.
     pub fn preview(&mut self, layer: LayerId, doc_w: u32) -> PlacePreview {
-        let (rx, ry) = self.p.minification(self.img.width, self.img.height, doc_w);
-        let m = rx.max(ry).max(1.0);
-        let level = m.log2().floor() as i32;
-        if level != self.level {
+        let level = if self.p.is_distorted() {
+            DISTORTED_LEVEL
+        } else {
+            let (rx, ry) = self.p.minification(self.img.width, self.img.height, doc_w);
+            let m = rx.max(ry).max(1.0);
+            m.log2().floor() as i32
+        };
+        if level == DISTORTED_LEVEL && self.level != DISTORTED_LEVEL {
+            self.level = level;
+            // Base level capped for upload speed; the merge uses the full image.
+            let base = if self.img.width.max(self.img.height) > PREVIEW_DISTORT_DIM {
+                let k = PREVIEW_DISTORT_DIM as f64 / self.img.width.max(self.img.height) as f64;
+                self.img.resized(
+                    ((self.img.width as f64 * k).round() as u32).max(1),
+                    ((self.img.height as f64 * k).round() as u32).max(1),
+                )
+            } else {
+                (*self.img).clone()
+            };
+            let (w, h) = (base.width, base.height);
+            let mut mips = Vec::new();
+            let mut prev = base.clone();
+            let mut k = 1;
+            while w >> k > 0 || h >> k > 0 {
+                prev = prev.resized((w >> k).max(1), (h >> k).max(1));
+                mips.push(premul8(&prev));
+                k += 1;
+            }
+            self.pw = w;
+            self.ph = h;
+            self.preview = Arc::new(premul8(&base));
+            self.mips = Arc::new(mips);
+            self.rev = REV.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else if level != self.level {
+            self.mips = Arc::new(Vec::new());
             self.level = level;
             let s = 0.5f64.powi(level);
             let img = if level > 0 {
@@ -151,6 +240,7 @@ impl Floating {
             width: self.pw,
             height: self.ph,
             rev: self.rev,
+            mips: self.mips.clone(),
         }
     }
 
@@ -196,9 +286,73 @@ impl Floating {
                     p.rotation = r;
                 }
             }
+            Handle::Pin(_) | Handle::PinEdge(_) | Handle::Mesh(_) => {
+                return self.distort_to(to, free);
+            }
         }
         p.clamp();
         self.p = p;
+    }
+
+    /// Distortion drags. The frame is unchanged during them, so the pointer's
+    /// frame-local coordinates are exact. `constrain` = Shift: pins and mesh points
+    /// move along the dominant axis only; edges move perpendicular to themselves.
+    fn distort_to(&mut self, to: Vec3, constrain: bool) {
+        let Some(d) = self.drag else { return };
+        let s = d.start;
+        let Some((lx, ly)) = s.local(to) else { return };
+        let (dx, dy) = (lx - d.local0.0, ly - d.local0.1);
+        let axis = |dx: f64, dy: f64| {
+            if !constrain {
+                (dx, dy)
+            } else if dx.abs() >= dy.abs() {
+                (dx, 0.0)
+            } else {
+                (0.0, dy)
+            }
+        };
+        let mut w = s.warp;
+        match d.handle {
+            Handle::Pin(i) => {
+                let (dx, dy) = axis(dx, dy);
+                w.corners[i] = [s.warp.corners[i][0] + dx, s.warp.corners[i][1] + dy];
+            }
+            Handle::PinEdge(i) => {
+                let j = (i + 1) % 4;
+                let (a, b) = (s.warp.corners[i], s.warp.corners[j]);
+                let (mut dx, mut dy) = (dx, dy);
+                if constrain {
+                    // Perpendicular to the edge.
+                    let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
+                    let l2 = (ex * ex + ey * ey).max(1e-12);
+                    let k = (dx * ex + dy * ey) / l2;
+                    dx -= k * ex;
+                    dy -= k * ey;
+                }
+                w.corners[i] = [a[0] + dx, a[1] + dy];
+                w.corners[j] = [b[0] + dx, b[1] + dy];
+            }
+            Handle::Mesh(k) if k < MESH_LEN => {
+                // Mesh points live in the corner-pin square: undo the homography.
+                let wp = Warper::new(&s.warp);
+                let (Some(t), Some(t0)) =
+                    (wp.hinv.apply(lx, ly), wp.hinv.apply(d.local0.0, d.local0.1))
+                else {
+                    return;
+                };
+                let (dx, dy) = axis(t.0 - t0.0, t.1 - t0.1);
+                w.mesh[k] = [s.warp.mesh[k][0] + dx, s.warp.mesh[k][1] + dy];
+            }
+            _ => return,
+        }
+        match w.validate() {
+            Ok(()) => {
+                self.p.warp = w;
+                self.invalid = None;
+            }
+            // Keep the last valid shape.
+            Err(e) => self.invalid = Some(e),
+        }
     }
 }
 

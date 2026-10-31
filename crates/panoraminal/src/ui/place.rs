@@ -2,11 +2,12 @@
 
 use crate::app::PanoApp;
 use crate::icons::Glyph;
-use crate::placing::{DragState, Handle};
+use crate::placing::{DragState, EditMode, Handle};
 use crate::theme::{brand, with_alpha};
 use crate::ui::widgets::{icon_button, primary_button, slider_row, toggle};
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, Stroke, Vec2};
-use panoraminal_core::place::Projection;
+use panoraminal_core::place::{Placement, Projection};
+use panoraminal_core::warp::{mesh_rest, Invalid, MESH_LEN, MESH_N};
 use panoraminal_core::Vec3;
 use panoraminal_i18n::tr;
 
@@ -49,10 +50,67 @@ fn handles(app: &PanoApp) -> Option<Handles> {
     })
 }
 
+/// Screen positions of the distortion handles: pins, pin edges, mesh points.
+struct DistortHandles {
+    pins: [Option<Pos2>; 4],
+    edges: [Option<Pos2>; 4],
+    mesh: [Option<Pos2>; MESH_LEN],
+}
+
+fn distort_handles(app: &PanoApp) -> Option<DistortHandles> {
+    let f = app.floating.as_ref()?;
+    let p = f.p;
+    let c0 = app.canvas_rect.center();
+    let near = app.dir_to_screen(p.center, c0).unwrap_or(c0);
+    let at = |x: f64, y: f64| p.image_dir(x, y).and_then(|d| app.dir_to_screen(d, near));
+    let mut mesh = [None; MESH_LEN];
+    if f.mode == EditMode::Warp {
+        for (k, m) in mesh.iter_mut().enumerate() {
+            let [x, y] = mesh_rest(k % MESH_N, k / MESH_N);
+            *m = at(x, y);
+        }
+    }
+    Some(DistortHandles {
+        pins: [at(-1.0, 1.0), at(1.0, 1.0), at(1.0, -1.0), at(-1.0, -1.0)],
+        edges: [at(0.0, 1.0), at(1.0, 0.0), at(0.0, -1.0), at(-1.0, 0.0)],
+        mesh,
+    })
+}
+
+fn inside_image(p: &Placement, d: Vec3) -> bool {
+    p.image_local(d)
+        .map(|(x, y)| x.abs() <= 1.0 && y.abs() <= 1.0)
+        .unwrap_or(false)
+}
+
 /// The handle under `pos`, if any (Move when inside the image).
 pub fn hit_test(app: &PanoApp, pos: Pos2) -> Option<Handle> {
-    let h = handles(app)?;
+    let f = app.floating.as_ref()?;
     let close = |q: Option<Pos2>| q.map(|q| q.distance(pos) <= HIT).unwrap_or(false);
+    if f.mode.is_distort() {
+        let h = distort_handles(app)?;
+        if f.mode == EditMode::Warp {
+            for (k, m) in h.mesh.iter().enumerate() {
+                if close(*m) {
+                    return Some(Handle::Mesh(k));
+                }
+            }
+        } else {
+            for (i, c) in h.pins.iter().enumerate() {
+                if close(*c) {
+                    return Some(Handle::Pin(i));
+                }
+            }
+            for (i, e) in h.edges.iter().enumerate() {
+                if close(*e) {
+                    return Some(Handle::PinEdge(i));
+                }
+            }
+        }
+        let d = app.screen_to_dir(pos)?;
+        return inside_image(&f.p, d).then_some(Handle::Move);
+    }
+    let h = handles(app)?;
     if close(h.rotate) {
         return Some(Handle::Rotate);
     }
@@ -67,8 +125,11 @@ pub fn hit_test(app: &PanoApp, pos: Pos2) -> Option<Handle> {
         }
     }
     let d = app.screen_to_dir(pos)?;
-    let (x, y) = app.floating.as_ref()?.p.local(d)?;
-    (x.abs() <= 1.0 && y.abs() <= 1.0).then_some(Handle::Move)
+    let in_box =
+        f.p.local(d)
+            .map(|(x, y)| x.abs() <= 1.0 && y.abs() <= 1.0)
+            .unwrap_or(false);
+    (in_box || inside_image(&f.p, d)).then_some(Handle::Move)
 }
 
 pub fn cursor_for(h: Option<Handle>, dragging: bool) -> CursorIcon {
@@ -90,6 +151,8 @@ pub fn cursor_for(h: Option<Handle>, dragging: bool) -> CursorIcon {
             }
         }
         Some(Handle::Rotate) => CursorIcon::Alias,
+        Some(Handle::Pin(_)) | Some(Handle::Mesh(_)) => CursorIcon::Crosshair,
+        Some(Handle::PinEdge(_)) => CursorIcon::AllScroll,
         None => CursorIcon::Default,
     }
 }
@@ -100,9 +163,12 @@ pub fn begin_drag(app: &mut PanoApp, h: Handle, d: Vec3) {
         return;
     };
     f.checkpoint();
+    f.invalid = None;
     let local0 = match h {
         Handle::Corner(i) => [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][i],
         Handle::Edge(i) => [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)][i],
+        // Pins start exactly at their target so a click does not nudge them.
+        Handle::Pin(i) => (f.p.warp.corners[i][0], f.p.warp.corners[i][1]),
         _ => f.p.local(d).unwrap_or((0.0, 0.0)),
     };
     f.drag = Some(DragState {
@@ -111,6 +177,48 @@ pub fn begin_drag(app: &mut PanoApp, h: Handle, d: Vec3) {
         from: d,
         local0,
     });
+}
+
+/// Screen polylines of `pts` mapped through `dir`, split where a point is behind
+/// the camera or jumps (seam in the flat view).
+fn polyline(
+    app: &PanoApp,
+    near0: Pos2,
+    pts: impl Iterator<Item = (f64, f64)>,
+    dir: impl Fn(f64, f64) -> Option<Vec3>,
+) -> Vec<Vec<Pos2>> {
+    let rect = app.canvas_rect;
+    let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
+    let mut last: Option<Pos2> = None;
+    for (x, y) in pts {
+        let q = dir(x, y).and_then(|d| app.dir_to_screen(d, last.unwrap_or(near0)));
+        match (q, last) {
+            (Some(q), Some(l)) if q.distance(l) > rect.width().max(rect.height()) * 0.6 => {
+                runs.push(vec![q]);
+            }
+            (Some(q), _) => runs.last_mut().unwrap().push(q),
+            (None, _) => runs.push(Vec::new()),
+        }
+        last = q;
+    }
+    runs.into_iter().filter(|r| r.len() > 1).collect()
+}
+
+/// Points around the `[-1, 1]²` square, clockwise from the top-left corner.
+fn square_path(n: usize) -> impl Iterator<Item = (f64, f64)> {
+    (0..4)
+        .flat_map(move |e| {
+            (0..n).map(move |i| {
+                let t = i as f64 / n as f64 * 2.0 - 1.0;
+                match e {
+                    0 => (t, 1.0),
+                    1 => (1.0, -t),
+                    2 => (-t, -1.0),
+                    _ => (-1.0, t),
+                }
+            })
+        })
+        .chain(std::iter::once((-1.0, 1.0)))
 }
 
 /// Outline and handles over the canvas.
@@ -124,47 +232,30 @@ pub fn draw(app: &PanoApp, painter: &egui::Painter, hover: Option<Handle>) {
     let near0 = app
         .dir_to_screen(p.center, rect.center())
         .unwrap_or(rect.center());
-    // Outline: sampled edges, split where a point is behind the camera or jumps.
-    let n = 32;
-    let mut runs: Vec<Vec<Pos2>> = vec![Vec::new()];
-    let mut last: Option<Pos2> = None;
-    let path = (0..4).flat_map(|e| {
-        (0..n).map(move |i| {
-            let t = i as f64 / n as f64 * 2.0 - 1.0;
-            match e {
-                0 => (t, 1.0),
-                1 => (1.0, -t),
-                2 => (-t, -1.0),
-                _ => (-1.0, t),
-            }
-        })
-    });
-    let mut pts: Vec<(f64, f64)> = path.collect();
-    pts.push((-1.0, 1.0));
-    for (x, y) in pts {
-        let q = app.dir_to_screen(p.dir_at(x, y), last.unwrap_or(near0));
-        match (q, last) {
-            (Some(q), Some(l)) if q.distance(l) > rect.width().max(rect.height()) * 0.6 => {
-                runs.push(vec![q]);
-            }
-            (Some(q), _) => runs.last_mut().unwrap().push(q),
-            (None, _) => runs.push(Vec::new()),
+    let dashed = |runs: Vec<Vec<Pos2>>| {
+        for r in runs {
+            painter.add(egui::Shape::line(
+                r.clone(),
+                Stroke::new(3.0, Color32::from_black_alpha(140)),
+            ));
+            painter.add(egui::Shape::dashed_line(
+                &r,
+                Stroke::new(1.4, with_alpha(pal.neon, 0.95)),
+                7.0,
+                4.0,
+            ));
         }
-        last = q;
-    }
-    for r in runs.into_iter().filter(|r| r.len() > 1) {
-        painter.add(egui::Shape::line(
-            r.clone(),
-            Stroke::new(3.0, Color32::from_black_alpha(140)),
-        ));
-        painter.add(egui::Shape::dashed_line(
-            &r,
-            Stroke::new(1.4, with_alpha(pal.neon, 0.95)),
-            7.0,
-            4.0,
-        ));
-    }
-    let Some(h) = handles(app) else { return };
+    };
+    let solid = |runs: Vec<Vec<Pos2>>, w: f32, c: Color32| {
+        for r in runs {
+            painter.add(egui::Shape::line(
+                r.clone(),
+                Stroke::new(w + 1.6, Color32::from_black_alpha(120)),
+            ));
+            painter.add(egui::Shape::line(r, Stroke::new(w, c)));
+        }
+    };
+    let image_outline = || polyline(app, near0, square_path(48), |x, y| p.image_dir(x, y));
     let knob = |q: Pos2, hot: bool, round: bool| {
         let r = if hot { 6.5 } else { 5.0 };
         if round {
@@ -176,6 +267,70 @@ pub fn draw(app: &PanoApp, painter: &egui::Painter, hover: Option<Handle>) {
             painter.rect_filled(rr, 2.0, if hot { brand::CYAN } else { Color32::WHITE });
         }
     };
+    if f.mode.is_distort() {
+        // Distorted outline, warp grid, then pin / mesh knobs.
+        let accent = if f.invalid.is_some() {
+            pal.danger
+        } else {
+            with_alpha(brand::CYAN, 0.95)
+        };
+        if f.mode == EditMode::Warp {
+            let n = (MESH_N - 1) as f64;
+            for k in 1..MESH_N - 1 {
+                let t = -1.0 + 2.0 * k as f64 / n;
+                let line = |vert: bool| {
+                    (0..=32).map(move |i| {
+                        let u = -1.0 + 2.0 * i as f64 / 32.0;
+                        if vert {
+                            (t, u)
+                        } else {
+                            (u, t)
+                        }
+                    })
+                };
+                for vert in [false, true] {
+                    solid(
+                        polyline(app, near0, line(vert), |x, y| p.image_dir(x, y)),
+                        1.0,
+                        with_alpha(brand::CYAN, 0.6),
+                    );
+                }
+            }
+        }
+        solid(image_outline(), 1.6, accent);
+        let Some(h) = distort_handles(app) else {
+            return;
+        };
+        if f.mode == EditMode::Warp {
+            for (k, m) in h.mesh.iter().enumerate() {
+                if let Some(m) = m {
+                    knob(*m, hover == Some(Handle::Mesh(k)), true);
+                }
+            }
+        } else {
+            for (i, e) in h.edges.iter().enumerate() {
+                if let Some(e) = e {
+                    knob(*e, hover == Some(Handle::PinEdge(i)), false);
+                }
+            }
+            for (i, c) in h.pins.iter().enumerate() {
+                if let Some(c) = c {
+                    let hot = hover == Some(Handle::Pin(i));
+                    painter.circle_stroke(*c, 11.0, Stroke::new(1.2, accent));
+                    knob(*c, hot, true);
+                }
+            }
+        }
+        return;
+    }
+    // Transform mode: the transform box (dashed) and, when distorted, the image.
+    dashed(polyline(app, near0, square_path(32), |x, y| {
+        Some(p.dir_at(x, y))
+    }));
+    if p.is_distorted() {
+        solid(image_outline(), 1.2, with_alpha(brand::CYAN, 0.8));
+    }
+    let Some(h) = handles(app) else { return };
     if let (Some(t), Some(r)) = (h.edges[0], h.rotate) {
         painter.line_segment([t, r], Stroke::new(1.2, with_alpha(pal.neon, 0.9)));
     }
@@ -215,6 +370,7 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
     let mut cancel = false;
     let mut reaim = false;
     let mut proj_change = None;
+    let mut toggle_distort = false;
     egui::Window::new(tr("place.title"))
         .id(egui::Id::unique("place_panel"))
         .collapsible(false)
@@ -313,6 +469,117 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
                 }
                 f.p.clamp();
             }
+            // Point-based distortion.
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(f.mode.is_distort(), tr("place.distort"))
+                    .on_hover_text(format!("{} (D)", tr("place.distort.desc")))
+                    .clicked()
+                {
+                    toggle_distort = true;
+                }
+                if f.mode.is_distort() {
+                    ui.separator();
+                    for (m, key, tip) in [
+                        (
+                            EditMode::Perspective,
+                            "place.distort.perspective",
+                            "place.distort.perspective.desc",
+                        ),
+                        (
+                            EditMode::Warp,
+                            "place.distort.warp",
+                            "place.distort.warp.desc",
+                        ),
+                    ] {
+                        let tip = if m == EditMode::Warp {
+                            format!("{} (W)", tr(tip))
+                        } else {
+                            tr(tip).to_string()
+                        };
+                        if ui
+                            .selectable_label(f.mode == m, tr(key))
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            f.mode = m;
+                            f.invalid = None;
+                        }
+                    }
+                }
+            });
+            if f.mode.is_distort() || f.p.is_distorted() {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            f.p.is_distorted(),
+                            egui::Button::new(tr("place.distort.reset")),
+                        )
+                        .clicked()
+                    {
+                        f.reset_distortion();
+                    }
+                    if f.p.warp.has_mesh()
+                        && ui
+                            .add(egui::Button::new(tr("place.distort.reset_warp")))
+                            .clicked()
+                    {
+                        f.checkpoint();
+                        f.p.warp.reset_mesh();
+                    }
+                });
+                if f.mode == EditMode::Perspective {
+                    // Numeric pins (frame-local units, image corners at ±1).
+                    egui::CollapsingHeader::new(tr("place.distort.numeric"))
+                        .id_salt("pins_numeric")
+                        .show(ui, |ui| {
+                            let before = f.p.warp;
+                            let mut w = before;
+                            egui::Grid::new("pins_grid").num_columns(3).show(ui, |ui| {
+                                for (i, key) in [
+                                    "place.pin.tl",
+                                    "place.pin.tr",
+                                    "place.pin.br",
+                                    "place.pin.bl",
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                {
+                                    ui.label(tr(key));
+                                    for c in 0..2 {
+                                        ui.add(
+                                            egui::DragValue::new(&mut w.corners[i][c])
+                                                .speed(0.005)
+                                                .range(-4.0..=4.0)
+                                                .max_decimals(3),
+                                        );
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                            if w != before {
+                                match w.validate() {
+                                    Ok(()) => {
+                                        f.checkpoint();
+                                        f.p.warp = w;
+                                        f.invalid = None;
+                                    }
+                                    Err(e) => f.invalid = Some(e),
+                                }
+                            }
+                        });
+                }
+                if let Some(e) = f.invalid {
+                    ui.colored_label(
+                        pal.danger,
+                        tr(match e {
+                            Invalid::Degenerate => "place.distort.degenerate",
+                            Invalid::Concave => "place.distort.concave",
+                        }),
+                    );
+                }
+            }
             if f.p.projection == Projection::Gnomonic {
                 ui.add_space(2.0);
                 if ui
@@ -350,15 +617,24 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
             });
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(tr("place.hint"))
-                        .size(11.5)
-                        .color(pal.text_weak),
+                    egui::RichText::new(tr(if f.mode.is_distort() {
+                        "place.distort.hint"
+                    } else {
+                        "place.hint"
+                    }))
+                    .size(11.5)
+                    .color(pal.text_weak),
                 )
                 .wrap(),
             );
         });
     if let Some(p) = proj_change {
         app.set_place_projection(p);
+    }
+    if toggle_distort {
+        if let Some(f) = app.floating.as_mut() {
+            f.toggle_distort();
+        }
     }
     if reaim {
         app.reaim_placement();
