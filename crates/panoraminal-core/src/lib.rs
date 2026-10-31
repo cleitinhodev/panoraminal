@@ -11,6 +11,7 @@
 //! * [`rect`] — integer rectangles and dirty-region tracking.
 //! * [`tip`] — sampled brush tips (custom brushes) and their dynamics.
 //! * [`place`] — placing images on the sphere (spherical patch / gnomonic projector).
+//! * [`warp`] — corner-pin homography and mesh warp of placed images.
 
 pub mod blend;
 pub mod brush;
@@ -21,6 +22,7 @@ pub mod math;
 pub mod place;
 pub mod rect;
 pub mod tip;
+pub mod warp;
 
 pub use blend::BlendMode;
 pub use brush::{BrushSettings, StrokeEngine, ToolKind};
