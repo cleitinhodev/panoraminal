@@ -613,6 +613,7 @@ impl GpuCanvas {
 
         // Floating placed image: upload when new, recomposite old ∪ new bounds on change.
         let place = place.filter(|p| doc.layer(p.layer).is_some() && p.width > 0 && p.height > 0);
+        let mut tex_changed = false;
         if let Some(p) = place {
             if p.rev != self.place.rev {
                 let levels = 1 + p.mips.len() as u32;
@@ -663,11 +664,13 @@ impl GpuCanvas {
                 self.place.th = p.height;
                 self.place.tex = t;
                 self.place.rev = p.rev;
-                self.place.last = None;
+                // New pixels: refresh the area (the old bounds stay in `last`
+                // so a shape change in the same frame is cleaned up too).
+                tex_changed = true;
             }
         }
         let now = place.map(|p| (p.layer, p.placement));
-        if now != self.place.last {
+        if tex_changed || now != self.place.last {
             for (_, pl) in self.place.last.iter().chain(now.iter()) {
                 regions.extend(pl.pixel_bounds(w, h));
             }
