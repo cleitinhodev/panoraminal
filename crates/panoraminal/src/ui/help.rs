@@ -197,10 +197,28 @@ fn tools_tab(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
             });
         });
     });
+    ui.add_space(6.0);
+    theme::card(pal).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::hover());
+            theme::gradient_pill(ui.painter(), r, &[brand::DEEP, brand::ROYAL], 9.0);
+            icons::draw(
+                ui.painter(),
+                r.shrink(8.0),
+                Glyph::LineLayer,
+                Color32::WHITE,
+            );
+            ui.vertical(|ui| {
+                ui.label(RichText::new(tr("help.lines.title")).strong().size(15.0));
+                ui.label(RichText::new(tr("help.lines.desc")).color(pal.text_weak));
+            });
+        });
+    });
 }
 
 fn tips_tab(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
-    for i in 1..=12 {
+    for i in 1..=14 {
         let key = format!("help.tip.{i}");
         ui.horizontal_top(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::hover());

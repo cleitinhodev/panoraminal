@@ -3,6 +3,28 @@
 All notable changes to Panoraminal are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] — 2026-11-26
+
+### Added
+- **Line layers (vector lines)** — a new layer type that keeps **editable strokes** instead of pixels, inspired by the line layers of painting apps such as Paint Tool SAI (our own implementation). Points, thickness, colour, opacity and tapers can be changed at any time; the layer still blends (opacity, 9 blend modes, visibility, reorder, duplicate) like any other layer and is flattened into PNG/JPEG exports.
+  - **Curve line** (`L`): click to place points, the line curves smoothly through them (`Shift`+click: sharp corner). Drag right after clicking to adjust the new point; double-click or `Enter` finishes; clicking the first point closes the shape; `Backspace` removes the last point; `Esc` cancels.
+  - **Freehand line** (`Shift+L`): draw freely; on release the stroke is simplified into editable control points (with *Smoothing*); pen pressure sets the width of each point.
+  - **Edit points** (`K`): drag a point to move it, drag a line to move the whole stroke along the sphere; `Ctrl`+click on a line inserts a point, `Ctrl`+click on a point toggles a sharp corner, `Alt`+click splits the stroke, `Del` deletes the selected point or stroke; dropping an end point on another end point **joins** the strokes (or closes one).
+  - **Line thickness** (`T`): drag a point to make the line thicker or thinner there (per-point width), drag a line to change the whole stroke; `Ctrl`+click applies the current size, colour, opacity and tapers.
+  - Panel: options for new lines (size, opacity, taper start/end, smooth curve or straight segments, freehand smoothing and pressure, join end points) and for the selected line (size, opacity, tapers, smooth, closed, *Use current colour*, *Use current settings*, per-point thickness, sharp corner, *Split here*, delete point/line).
+  - **New line layer** (`Ctrl+Shift+L`, Layer menu or the new button in the Layers card); the drawing tools also create one automatically above a normal layer. **Convert to normal layer** (Layer menu / layer context menu) rasterizes the lines so you can paint over them with the brushes. Line layers show a vector badge on their thumbnail.
+  - Lines live **on the sphere**: points are stored as longitude/latitude, curves are spherical (centripetal Catmull–Rom normalised onto the sphere) and straight segments are great-circle arcs — they look straight in the 360° view, cross the 0°/360° seam and pass over the poles without breaking. Rendering is antialiased with tapered, round-capped ends, and only the area that changed is redrawn while you edit. Editable with overlay handles in both the sphere and the flat view.
+  - Every line edit (draw, move, insert, delete, split, join, thickness, panel changes, convert) is a single undo/redo step.
+- Help: the four line tools, a *Line layers* card, a *Lines* group in Shortcuts and two new tips. All new strings in the 8 languages.
+- Command line: `--tool line-curve|line-free|line-edit|line-width` and `--line-demo edit|width|curve` (a sample line layer, used for the screenshots).
+
+### Fixed
+- `Ctrl+Shift+N` (New layer) opened the *New document* dialog because `Ctrl+N` was checked first; shortcuts with more modifiers now take precedence (a test guards against shortcuts shadowing each other).
+
+### Compatibility
+- `.pano` stays at format version 1 with a new `minor: 2` field. Each line layer is saved as before as a PNG (the rendered lines) **plus** its strokes in `lines/NNN.json`. Projects from 1.0–1.3 open unchanged. Panoraminal 1.0–1.3 open 1.4 projects too: they ignore the unknown fields and show line layers as normal (raster) layers — the lines look the same but are no longer editable there, and saving from an older version drops the strokes.
+- Painting tools, fill and image placement never write into a line layer: painting/filling shows a hint to use the line tools or convert the layer, and a placed image is merged into a new layer. Merging a layer down onto a line layer turns the result into a normal layer (undoable). All existing tools behave as in 1.3.
+
 ## [1.3.0] — 2026-11-26
 
 ### Added
@@ -92,6 +114,7 @@ First release of **Panoraminal**, the successor of the Paint360 prototype, rewri
 - Packages: Windows installer (NSIS) and portable zip; Linux AppImage, `.deb` and `.tar.gz`; macOS app bundle (built by CI).
 - CI (tests, clippy, rustfmt) and tagged release workflows on GitHub Actions.
 
+[1.4.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.4.0
 [1.3.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.3.0
 [1.2.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.1.0

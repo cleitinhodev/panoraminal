@@ -34,11 +34,12 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 - **Posicionar imagens na cena** (novo na 1.1) — solte, cole ou insira uma foto/logo e ela flutua sobre o panorama como um objeto não destrutivo: mova, escale (uniforme ou livre), gire, espelhe e ajuste a opacidade com alças na tela, nas duas vistas. Duas projeções: **Envolver** (curvada sobre a esfera como um adesivo) e **Persistente** (um quadro plano projetado do centro, sem distorção a partir da direção ancorada, com *Reapontar para a vista*). Prévia ao vivo na GPU, aplicação em qualidade total com `Enter`, *Posicionar como nova camada*, `Esc` para cancelar, desfazer/refazer.
 - **Distorcer / perspectiva** (novo na 1.2) — aperte `D` enquanto posiciona uma imagem e arraste os **quatro pinos dos cantos** até os cantos de uma parede, uma tela ou o chão: a imagem é mapeada com perspectiva real (homografia) e parece fazer parte do cenário. Na projeção **Persistente** as linhas retas continuam retas na esfera; `W` ativa uma **malha 4×4** para superfícies curvas. `Shift` trava um eixo, as alças das bordas movem dois pinos de uma vez, as coordenadas dos pinos podem ser digitadas, *Redefinir distorção* recomeça, e formas dobradas ou degeneradas são recusadas com um aviso. A distorção faz parte do desfazer do posicionamento e é mantida ao mover, escalar, girar e trocar de projeção.
 - **Estilos de pintura, mistura de óleo e partículas** (novo na 1.3) — o **Pincel** agora é um **pincel de óleo**: ele pega as cores da camada e as mistura de um jeito falhado e irregular, como tinta de verdade na tela (amarelo sobre azul vira verde, sobre vermelho vira laranja). Parâmetros inspirados no SAI: **mistura**, **diluição**, **persistência** (arrasto da cor), **irregularidade** (marcas de cerdas e falhas secas), mistura como pigmento (subtrativa) e mistura controlada pela pressão. O **Aerógrafo** continua suave e ganha **partículas de borrifo** (quantidade, densidade, tamanho, variação de tamanho, espalhamento e concentração no centro). **8 formatos de ponta** (redonda, chata, cerdas, leque, giz, esponja, respingos, quadrada) num seletor com prévia, **texturas de papel** (tela, papel, grão, esponja) com intensidade e escala, **curva de pressão** e densidade mínima. Cada ferramenta tem **estilos prontos** (Óleo, Pincel seco, Misturador, Aquarela, Clássico; Suave, Spray, Respingos, Granulado; Nanquim, Lápis, Marcador; três borrachas) com um traço de prévia ao vivo, e você pode **salvar seus próprios estilos**. A mistura, as texturas e as partículas são calculadas na esfera: sem emenda em 0°/360° e corretas perto dos polos.
+- **Camadas de linhas — linhas vetoriais editáveis** (novo na 1.4) — um tipo de camada que guarda os traços como **pontos editáveis** (na linha das camadas de linhas do Paint Tool SAI): **Linha curva** (`L`, clique para pôr pontos; `Shift`+clique para cantos), **Linha à mão livre** (`Shift+L`, vira pontos ao soltar, pressão → espessura), **Editar pontos** (`K`: mova pontos ou traços inteiros, `Ctrl`+clique insere ponto / canto, `Alt`+clique divide, solte uma ponta sobre outra para juntar, `Del` apaga) e **Espessura da linha** (`T`: arraste um ponto para engrossar ou afinar a linha ali, arraste a linha para o traço inteiro). Espessura, cor, opacidade, afinamento no início/fim, curvas suaves ou segmentos retos de círculo máximo, formas fechadas; cada mudança é um passo de desfazer. As linhas são desenhadas **na esfera** (curvas esféricas guardadas em longitude/latitude, com antisserrilhado, atravessando a emenda e os polos), editadas com alças nas duas vistas, mescladas como qualquer camada e achatadas na exportação. *Converter em camada normal* transforma em pixels para pintar por cima.
 - **Pressão da caneta** no tamanho e/ou na opacidade (veja as [limitações](#limitações-conhecidas)).
 - **Linhas retas** com `Shift`+clique (círculos máximos), **conta-gotas** (`I` ou `Alt`+clique) e **balde de tinta 360°** que atravessa a emenda.
 - **Camadas** — até 64, reordenáveis por arrastar e soltar, renomear, visibilidade, trava de transparência, opacidade e 9 modos de mesclagem (normal, multiplicar, tela, sobrepor, escurecer, clarear, adição/brilho, diferença, luz suave), com miniaturas ao vivo.
 - **Desfazer / refazer** com limite de memória configurável.
-- **Projetos `.pano`** (ZIP com camadas PNG + manifesto JSON + prévia). Projetos antigos do Paint360 (`.p360.json`) são importados.
+- **Projetos `.pano`** (ZIP com camadas PNG + manifesto JSON + prévia; camadas de linhas também guardam os traços em JSON, e versões antigas as abrem como camadas normais). Projetos antigos do Paint360 (`.p360.json`) são importados.
 - **Importar** PNG, JPEG, WebP, BMP e TIFF como novo documento ou como camada; arraste arquivos para a janela.
 - **Exportar** PNG ou JPEG 360° (XMP GPano), girar o rumo e espelhar horizontalmente.
 - **Salvamento automático e recuperação** após falhas, aviso de alterações não salvas.
@@ -49,6 +50,8 @@ No final, exporte um **JPEG 360° com metadados GPano**, reconhecido pelo Facebo
 
 | | |
 |---|---|
+| ![Camada de linhas: pontos editáveis e espessura variável (tema escuro)](docs/screenshots/lines-edit-dark-pt.png) | ![Ferramenta de espessura da linha, tema claro](docs/screenshots/lines-width-light-pt.png) |
+| ![Desenhando uma linha curva (tema escuro)](docs/screenshots/lines-curve-dark-pt.png) | ![Camada de linhas na vista plana (tema claro)](docs/screenshots/lines-flat-light-pt.png) |
 | ![Pincel de óleo: amarelo misturando sobre azul e vermelho (tema escuro)](docs/screenshots/oil-mixing-dark-pt.png) | ![Pincel de óleo, tema claro](docs/screenshots/oil-mixing-light-pt.png) |
 | ![Partículas do aerógrafo: spray, respingos e granulado](docs/screenshots/airbrush-particles-dark-pt.png) | ![Estilos e seletor de formato da ponta](docs/screenshots/tip-shapes-dark-pt.png) |
 | ![Pinos nos cantos de uma parede (projeção Persistente)](docs/screenshots/place-distort-light-pt.png) | ![Mesclada na parede](docs/screenshots/place-distort-merged.png) |
@@ -80,6 +83,13 @@ No macOS, `Ctrl` vira `⌘`. A lista completa está em **Ajuda → Atalhos** (`F
 | `P` Caneta | `B` Pincel | `[` / `]` Tamanho − / + | `{` / `}` Dureza − / + |
 | `A` Aerógrafo · `C` Pincel personalizado | `E` Borracha | `Shift`+clique Linha a partir do último ponto | `Alt`+clique Pegar cor |
 | `I` Conta-gotas | `F` Balde | `X` Trocar cores | `Esc` Cancelar traço / fechar janela |
+
+| Linhas (camadas de linhas) | |
+|---|---|
+| `L` Linha curva · `Shift+L` Linha à mão livre | `K` Editar pontos · `T` Espessura da linha |
+| Clique adiciona ponto · `Shift`+clique canto | `Enter` / duplo clique termina · `Backspace` remove o último ponto |
+| `Ctrl`+clique insere ponto / alterna canto | `Alt`+clique divide · `Del` apaga ponto ou linha |
+| `Ctrl+Shift+L` Nova camada de linhas | `[` / `]` Espessura − / + |
 
 | Arquivo | | Editar e camadas | |
 |---|---|---|---|
@@ -130,11 +140,13 @@ Os scripts de empacotamento ficam em [`packaging/`](packaging): `packaging/linux
 panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
   --lang <código>                  força um idioma (en, pt-BR, es, fr, de, it, ja, zh-CN)
   --theme <dark|light|system>      força um tema
-  --tool <pen|brush|airbrush|custom|eraser>   começa com uma ferramenta
+  --tool <pen|brush|airbrush|custom|eraser|line-curve|line-free|line-edit|line-width>
+                                   começa com uma ferramenta
   --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
                                    imagem de demonstração (wall* = presa a uma
                                    parede de um quarto sintético; capturas de tela)
   --paint-demo <oil|spray>         começa com traços de exemplo dos estilos de pintura
+  --line-demo <edit|width|curve>   começa com uma camada de linhas de exemplo
   --version, --help
 ```
 
@@ -144,6 +156,7 @@ panoraminal [ARQUIVO]              abre um projeto .pano ou uma imagem
 - A **importação de ABR** lê pontas amostradas e calculadas e as predefinições comuns (veja Recursos). Pincel duplo, textura, pontas de cerdas/erodíveis, dinâmica de cor, bordas molhadas e ruído ainda não têm equivalente: são ignorados e listados num aviso no pincel. Pontas coloridas viram máscaras (pintadas com a cor atual). O importador é testado com arquivos sintetizados; abra uma issue com qualquer `.abr` que não carregue.
 - **Distorção na projeção Envolver** aplica a homografia nas coordenadas angulares (tangentes) do recorte, então é só aproximadamente correta em perspectiva para recortes grandes; use **Persistente** para paredes e outras superfícies planas. A malha é uma grade fixa 4×4 (células bilineares); a prévia ao vivo de uma imagem distorcida usa no máximo 2048 px (a mesclagem usa a imagem inteira).
 - A **mistura do óleo** pega as cores apenas da **camada ativa** (pinte as cores de base e os novos traços na mesma camada). Os traços com mistura são pintados direto na camada (8 bits), então fluxos muito baixos acumulam em degraus visíveis. A mistura de pigmentos é uma aproximação (modelo de Kubelka–Munk de uma constante), não uma simulação espectral. A mistura roda na CPU, então pincéis de óleo muito grandes (centenas de pixels) podem ficar lentos em máquinas fracas.
+- **Camadas de linhas** guardam só traços vetoriais: pincéis, balde e borracha não funcionam nelas (use *Converter em camada normal* ou pinte em outra camada) e ainda não há borracha vetorial nem seleção por retângulo. Inserir um ponto numa curva suave pode deslocar um pouco a curva vizinha. Os traços são redesenhados na CPU, então milhares de traços longos e muito grossos deixam a edição mais lenta. O Panoraminal 1.0–1.3 abre projetos da 1.4 com as camadas de linhas como camadas normais (sem edição; salvar por lá descarta os traços).
 - Os formatos de ponta e as texturas de papel são procedurais (ainda não dá para carregar texturas em bitmap); os pincéis personalizados mantêm as próprias pontas, mas podem usar mistura, texturas e borrifo.
 - Imagens posicionadas são limitadas a 4096 px no lado maior (imagens maiores são reduzidas).
 - Tamanho máximo do documento: 8192 × 4096 (limite de textura da maioria das GPUs); 64 camadas.

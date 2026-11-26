@@ -6,6 +6,7 @@ pub mod color;
 pub mod dialogs;
 pub mod help;
 pub mod layers;
+pub mod lines;
 pub mod paintui;
 pub mod place;
 pub mod widgets;
@@ -368,7 +369,7 @@ fn menus(app: &mut PanoApp, ui: &mut egui::Ui) {
                 app.clear_layer();
             }
             if menu_item(ui, tr("menu.edit.fill_layer"), None) {
-                app.fill_layer();
+                app.fill_layer(&ctx);
             }
             ui.separator();
             if menu_item(ui, tr("menu.edit.offset"), None) {
@@ -386,6 +387,9 @@ fn menus(app: &mut PanoApp, ui: &mut egui::Ui) {
             if menu_item(ui, tr("menu.layer.new"), Some(Action::NewLayer)) {
                 app.new_layer(&ctx);
             }
+            if menu_item(ui, tr("menu.layer.new_lines"), Some(Action::NewLineLayer)) {
+                app.new_line_layer(&ctx);
+            }
             if menu_item(ui, tr("menu.layer.duplicate"), Some(Action::DuplicateLayer)) {
                 app.duplicate_layer(&ctx);
             }
@@ -396,6 +400,9 @@ fn menus(app: &mut PanoApp, ui: &mut egui::Ui) {
                 if let Some(l) = app.doc.active_layer() {
                     app.dlg.rename = Some((l.id, l.name.clone()));
                 }
+            }
+            if app.doc.active_is_lines() && menu_item(ui, tr("menu.layer.rasterize"), None) {
+                app.rasterize_line_layer(&ctx);
             }
             ui.separator();
             if menu_item(ui, tr("menu.layer.delete"), None) {
@@ -505,7 +512,7 @@ fn tool_bar(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
             if r.clicked() {
                 app.set_tool(t);
             }
-            if t == Tool::Paint(ToolKind::Eraser) {
+            if t == Tool::Paint(ToolKind::Eraser) || t == Tool::Fill {
                 ui.add_space(2.0);
                 let (r, _) = ui.allocate_exact_size(Vec2::new(30.0, 1.0), Sense::hover());
                 ui.painter()
@@ -612,6 +619,15 @@ fn status_bar(app: &mut PanoApp, ui: &mut egui::Ui) {
                 "status.size",
                 &[("px", &(app.brush().size.round()))],
             )));
+        }
+        if let Tool::Line(_) = app.tool {
+            let w = app.s.lines.width;
+            let w = if w < 10.0 {
+                (w * 10.0).round() / 10.0
+            } else {
+                w.round()
+            };
+            ui.label(small(trf("status.size", &[("px", &w)])));
         }
         if let Some(d) = app.cursor_dir {
             let (lon, lat) = panoraminal_core::math::lonlat_of(d);

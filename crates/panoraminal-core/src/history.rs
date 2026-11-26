@@ -47,6 +47,14 @@ pub enum Edit {
     Move { from: usize, to: usize },
     /// Layer properties changed; `props` holds the "other" state.
     Props { layer: LayerId, props: LayerProps },
+    /// The strokes of a line layer changed (1.4+). `art` holds the "other" state;
+    /// `None` on either side means "not a line layer" (rasterized), in which case the
+    /// pixels stay as they are. Pixels are re-rendered from the strokes, so no pixel
+    /// data needs to be stored.
+    Lines {
+        layer: LayerId,
+        art: Option<crate::lines::LineArt>,
+    },
     /// Several edits applied together.
     Group(Vec<Edit>),
 }
@@ -120,6 +128,25 @@ impl Edit {
                     doc.set_props(*layer, &other);
                 }
             }
+            Edit::Lines { layer, art } => {
+                let id = *layer;
+                let had = doc.layer(id).map(|l| l.is_lines());
+                match (had, art.is_some()) {
+                    (Some(true), true) => {
+                        let cur = doc.layer(id).and_then(|l| l.lines.clone());
+                        let new = art.take().unwrap_or_default();
+                        crate::lines::apply(doc, id, new);
+                        *art = cur;
+                    }
+                    (Some(_), _) => {
+                        if let Some(l) = doc.layer_mut(id) {
+                            std::mem::swap(&mut l.lines, art);
+                        }
+                        doc.touch_structure();
+                    }
+                    (None, _) => {}
+                }
+            }
             Edit::Group(v) => {
                 // Undo in reverse order; the reversed list then redoes correctly next time.
                 for e in v.iter_mut().rev() {
@@ -136,8 +163,11 @@ impl Edit {
             Edit::Pixels { tiles, .. } => tiles.iter().map(|t| t.data.len()).sum(),
             Edit::LayerPixels { pixels, .. } => pixels.len(),
             Edit::Insert { stash, .. } | Edit::Remove { stash, .. } => {
-                stash.as_ref().map_or(0, |l| l.pixels.len())
+                stash.as_ref().map_or(0, |l| {
+                    l.pixels.len() + l.lines.as_ref().map_or(0, |a| a.bytes())
+                })
             }
+            Edit::Lines { art, .. } => art.as_ref().map_or(64, |a| a.bytes()),
             Edit::Group(v) => v.iter().map(|e| e.bytes()).sum(),
             _ => 64,
         }
@@ -327,6 +357,96 @@ pub mod ops {
         Some(id)
     }
 
+    /// Adds an empty vector line layer above the active one.
+    pub fn add_line_layer(doc: &mut Document, hist: &mut History, name: &str) -> Option<LayerId> {
+        if doc.layers.len() >= crate::MAX_LAYERS {
+            return None;
+        }
+        let before = doc.active;
+        let mut l = doc.new_layer(name);
+        l.lines = Some(crate::lines::LineArt::default());
+        let id = l.id;
+        let index = doc.active_index() + 1;
+        doc.layers.insert(index.min(doc.layers.len()), l);
+        doc.active = id;
+        doc.touch_structure();
+        doc.mark_layer_full(id);
+        hist.push(
+            Edit::Remove { index, stash: None },
+            "hist.add_line_layer",
+            before,
+            id,
+        );
+        Some(id)
+    }
+
+    /// Records a line edit that has already been applied with [`crate::lines::apply`];
+    /// `before` is the previous strokes. Nothing is recorded if nothing changed.
+    pub fn commit_lines(
+        doc: &mut Document,
+        hist: &mut History,
+        id: LayerId,
+        before: crate::lines::LineArt,
+        label: &'static str,
+    ) -> bool {
+        let same = doc
+            .layer(id)
+            .and_then(|l| l.lines.as_ref())
+            .is_none_or(|cur| *cur == before);
+        if same {
+            return false;
+        }
+        hist.push(
+            Edit::Lines {
+                layer: id,
+                art: Some(before),
+            },
+            label,
+            doc.active,
+            doc.active,
+        );
+        true
+    }
+
+    /// Replaces the strokes of a line layer and records it in one step.
+    pub fn set_lines(
+        doc: &mut Document,
+        hist: &mut History,
+        id: LayerId,
+        art: crate::lines::LineArt,
+        label: &'static str,
+    ) -> bool {
+        let Some(before) = doc.layer(id).and_then(|l| l.lines.clone()) else {
+            return false;
+        };
+        if before == art {
+            return false;
+        }
+        crate::lines::apply(doc, id, art);
+        commit_lines(doc, hist, id, before, label)
+    }
+
+    /// Turns a line layer into a normal raster layer (keeps its pixels).
+    pub fn rasterize_lines(doc: &mut Document, hist: &mut History, id: LayerId) -> bool {
+        let Some(l) = doc.layer_mut(id) else {
+            return false;
+        };
+        let Some(art) = l.lines.take() else {
+            return false;
+        };
+        doc.touch_structure();
+        hist.push(
+            Edit::Lines {
+                layer: id,
+                art: Some(art),
+            },
+            "hist.rasterize_lines",
+            doc.active,
+            doc.active,
+        );
+        true
+    }
+
     pub fn duplicate_layer(
         doc: &mut Document,
         hist: &mut History,
@@ -409,8 +529,18 @@ pub mod ops {
             stash: None,
         };
         rm.swap(doc);
+        let mut edits = vec![px, rm];
+        // Merging onto a line layer turns it into a normal layer (its pixels now hold more
+        // than the strokes).
+        if let Some(art) = doc.layer_mut(low_id).and_then(|l| l.lines.take()) {
+            doc.touch_structure();
+            edits.push(Edit::Lines {
+                layer: low_id,
+                art: Some(art),
+            });
+        }
         doc.active = low_id;
-        hist.push(Edit::Group(vec![px, rm]), "hist.merge_down", before, low_id);
+        hist.push(Edit::Group(edits), "hist.merge_down", before, low_id);
         true
     }
 
@@ -467,7 +597,27 @@ pub mod ops {
         }
         let mut edits = Vec::new();
         let row = doc.width as usize * 4;
-        for l in doc.layers.iter_mut() {
+        // Line layers move their strokes (and are re-rendered from them).
+        let deg = dx as f64 / doc.width as f64 * 360.0;
+        let line_ids: Vec<LayerId> = doc
+            .layers
+            .iter()
+            .filter(|l| l.is_lines())
+            .map(|l| l.id)
+            .collect();
+        for id in &line_ids {
+            let Some(before) = doc.layer(*id).and_then(|l| l.lines.clone()) else {
+                continue;
+            };
+            let mut art = before.clone();
+            art.offset_lon(deg);
+            crate::lines::apply(doc, *id, art);
+            edits.push(Edit::Lines {
+                layer: *id,
+                art: Some(before),
+            });
+        }
+        for l in doc.layers.iter_mut().filter(|l| !l.is_lines()) {
             let old = l.pixels.clone();
             for r in l.pixels.chunks_exact_mut(row) {
                 r.rotate_right(dx * 4);
@@ -477,7 +627,12 @@ pub mod ops {
                 pixels: old,
             });
         }
-        let ids: Vec<_> = doc.layers.iter().map(|l| l.id).collect();
+        let ids: Vec<_> = doc
+            .layers
+            .iter()
+            .filter(|l| !l.is_lines())
+            .map(|l| l.id)
+            .collect();
         for id in ids {
             doc.mark_layer_full(id);
         }
@@ -625,5 +780,123 @@ mod tests {
         h.undo(&mut d);
         add_layer(&mut d, &mut h, "d");
         assert!(h.is_modified());
+    }
+
+    fn line_art(lon: f64) -> crate::lines::LineArt {
+        use crate::lines::{LinePoint, LineStroke};
+        crate::lines::LineArt {
+            strokes: vec![LineStroke {
+                points: vec![
+                    LinePoint {
+                        lon,
+                        lat: 0.0,
+                        w: 1.0,
+                        sharp: false,
+                    },
+                    LinePoint {
+                        lon: lon + 40.0,
+                        lat: 20.0,
+                        w: 2.0,
+                        sharp: false,
+                    },
+                ],
+                color: [10, 200, 30],
+                width: 3.0,
+                ..Default::default()
+            }],
+        }
+    }
+    fn rendered(d: &Document, id: LayerId) -> Vec<u8> {
+        let l = d.layer(id).unwrap();
+        let mut px = vec![0; l.pixels.len()];
+        crate::lines::render_full(l.lines.as_ref().unwrap(), &mut px, d.width, d.height);
+        px
+    }
+
+    #[test]
+    fn line_edits_undo_and_redo() {
+        let mut d = Document::new_blank(256, 128, Background::Sky, "bg", "l1");
+        let mut h = History::new();
+        let id = add_line_layer(&mut d, &mut h, "Lines").unwrap();
+        assert!(d.active_is_lines());
+        assert!(d.layer(id).unwrap().is_empty());
+        assert!(set_lines(
+            &mut d,
+            &mut h,
+            id,
+            line_art(10.0),
+            "hist.line_add"
+        ));
+        assert!(!d.layer(id).unwrap().is_empty());
+        let first = d.layer(id).unwrap().pixels.clone();
+        // Live edit + commit (like dragging a point).
+        let before = d.layer(id).unwrap().lines.clone().unwrap();
+        crate::lines::apply(&mut d, id, line_art(100.0));
+        assert!(commit_lines(&mut d, &mut h, id, before, "hist.line_edit"));
+        assert_eq!(d.layer(id).unwrap().pixels, rendered(&d, id));
+        let second = d.layer(id).unwrap().pixels.clone();
+        assert_ne!(first, second);
+        h.undo(&mut d);
+        assert_eq!(d.layer(id).unwrap().pixels, first);
+        assert_eq!(d.layer(id).unwrap().lines, Some(line_art(10.0)));
+        h.undo(&mut d);
+        assert!(d.layer(id).unwrap().is_empty());
+        h.redo(&mut d);
+        h.redo(&mut d);
+        assert_eq!(d.layer(id).unwrap().pixels, second);
+        // Unchanged commits are not recorded.
+        let n = h.len();
+        let same = d.layer(id).unwrap().lines.clone().unwrap();
+        assert!(!commit_lines(&mut d, &mut h, id, same, "hist.line_edit"));
+        assert_eq!(h.len(), n);
+    }
+
+    #[test]
+    fn rasterize_and_merge_keep_pixels() {
+        let mut d = Document::new_blank(256, 128, Background::Sky, "bg", "l1");
+        let mut h = History::new();
+        let id = add_line_layer(&mut d, &mut h, "Lines").unwrap();
+        set_lines(&mut d, &mut h, id, line_art(30.0), "hist.line_add");
+        let px = d.layer(id).unwrap().pixels.clone();
+        assert!(rasterize_lines(&mut d, &mut h, id));
+        assert!(!d.layer(id).unwrap().is_lines());
+        assert_eq!(d.layer(id).unwrap().pixels, px);
+        h.undo(&mut d);
+        assert!(d.layer(id).unwrap().is_lines());
+        // Merging a raster layer down onto the line layer makes it raster.
+        let top = add_layer(&mut d, &mut h, "top").unwrap();
+        d.layer_mut(top).unwrap().pixels[3] = 255;
+        assert!(merge_down(&mut d, &mut h));
+        assert!(!d.layer(id).unwrap().is_lines());
+        h.undo(&mut d);
+        assert!(d.layer(id).unwrap().is_lines());
+        assert_eq!(d.layer(id).unwrap().pixels, px);
+        // A line layer merged down into a raster layer just adds its pixels.
+        d.active = id;
+        let before = d.flatten(None);
+        assert!(merge_down(&mut d, &mut h));
+        assert!(d.layers.iter().all(|l| !l.is_lines()));
+        let after = d.flatten(None);
+        let diff = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max();
+        assert!(diff.unwrap() <= 1);
+    }
+
+    #[test]
+    fn offset_moves_line_strokes() {
+        let mut d = Document::new_blank(256, 128, Background::Sky, "bg", "l1");
+        let mut h = History::new();
+        let id = add_line_layer(&mut d, &mut h, "Lines").unwrap();
+        set_lines(&mut d, &mut h, id, line_art(350.0), "hist.line_add");
+        let px = d.layer(id).unwrap().pixels.clone();
+        offset_all(&mut d, &mut h, 64);
+        let l = d.layer(id).unwrap();
+        assert!((l.lines.as_ref().unwrap().strokes[0].points[0].lon - 80.0).abs() < 1e-9);
+        assert_eq!(l.pixels, rendered(&d, id));
+        h.undo(&mut d);
+        assert_eq!(d.layer(id).unwrap().pixels, px);
     }
 }

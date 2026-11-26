@@ -19,6 +19,9 @@ pub struct Layer {
     /// Alpha lock ("preserve transparency"): painting only affects already-opaque pixels.
     pub alpha_locked: bool,
     pub pixels: Vec<u8>,
+    /// Vector strokes of a *line layer* (1.4+). When present, `pixels` is their raster
+    /// cache and is only changed through [`crate::lines::apply`] / history edits.
+    pub lines: Option<crate::lines::LineArt>,
 }
 
 impl Layer {
@@ -31,7 +34,12 @@ impl Layer {
             blend: BlendMode::Normal,
             alpha_locked: false,
             pixels: vec![0; w as usize * h as usize * 4],
+            lines: None,
         }
+    }
+    /// True for vector line layers.
+    pub fn is_lines(&self) -> bool {
+        self.lines.is_some()
     }
     /// True if every pixel is fully transparent.
     pub fn is_empty(&self) -> bool {
@@ -138,6 +146,10 @@ impl Document {
     }
     pub fn active_layer(&self) -> Option<&Layer> {
         self.layer(self.active)
+    }
+    /// True if the active layer is a vector line layer.
+    pub fn active_is_lines(&self) -> bool {
+        self.active_layer().is_some_and(|l| l.is_lines())
     }
     /// Makes sure `active` refers to an existing layer.
     pub fn fix_active(&mut self) {

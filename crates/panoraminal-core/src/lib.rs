@@ -12,12 +12,14 @@
 //! * [`tip`] — sampled brush tips (custom brushes) and their dynamics.
 //! * [`place`] — placing images on the sphere (spherical patch / gnomonic projector).
 //! * [`warp`] — corner-pin homography and mesh warp of placed images.
+//! * [`lines`] — vector line layers: spherical splines, rasterizer, editing.
 
 pub mod blend;
 pub mod brush;
 pub mod document;
 pub mod fill;
 pub mod history;
+pub mod lines;
 pub mod math;
 pub mod paint;
 pub mod place;
@@ -29,6 +31,7 @@ pub use blend::BlendMode;
 pub use brush::{builtin_styles, BrushSettings, BuiltinStyle, StrokeEngine, ToolKind};
 pub use document::{Document, Layer, LayerId};
 pub use history::{Edit, History};
+pub use lines::{LineArt, LinePoint, LineStroke};
 pub use math::{Camera, FlatView, Vec3};
 pub use paint::{PaperTexture, TipShape};
 pub use rect::{DirtyRegion, IRect};

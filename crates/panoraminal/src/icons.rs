@@ -78,6 +78,16 @@ pub enum Glyph {
     Clear,
     CustomBrush,
     Star,
+    /// Curve tool: a curve through square control points.
+    LineCurve,
+    /// Freehand vector line: a wave with nodes.
+    LineFree,
+    /// Point editing: arrow + node.
+    LineEdit,
+    /// Thickness: a stroke growing from thin to thick.
+    LineWidth,
+    /// Line layer badge / "new line layer".
+    LineLayer,
 }
 
 /// A filled five-pointed star (inner pentagon + five convex spikes).
@@ -362,6 +372,93 @@ pub fn draw(p: &Painter, rect: Rect, g: Glyph, color: Color32) {
             pts.push((fx(7.0), 16.5));
             line(&pts);
             line(&[(fx(8.0), 4.5), (fx(5.0), 7.5), (fx(8.0), 10.5)]);
+        }
+        Glyph::LineCurve => {
+            let curve: Vec<_> = (0..=20)
+                .map(|i| {
+                    let t = i as f32 / 20.0;
+                    let x = 4.0 + 16.0 * t;
+                    let y = 17.0 - 10.0 * (std::f32::consts::PI * t).sin() * (1.0 - 0.3 * t);
+                    (x, y)
+                })
+                .collect();
+            line(&curve);
+            for (x, y) in [(4.0, 17.0), (12.0, 7.5), (20.0, 17.0)] {
+                p.rect_filled(
+                    Rect::from_center_size(pt(x, y), egui::vec2(4.2 * s, 4.2 * s)),
+                    0.8 * s,
+                    color,
+                );
+            }
+        }
+        Glyph::LineFree => {
+            let wave: Vec<_> = (0..=24)
+                .map(|i| {
+                    let t = i as f32 / 24.0;
+                    (
+                        3.5 + 17.0 * t,
+                        12.0 + 5.0 * (t * std::f32::consts::TAU * 1.2).sin(),
+                    )
+                })
+                .collect();
+            line(&wave);
+            for (x, y) in [
+                (3.5, 12.0),
+                (20.5, 12.0 + 5.0 * (std::f32::consts::TAU * 1.2).sin()),
+            ] {
+                p.circle_filled(pt(x, y), 2.0 * s, color);
+            }
+        }
+        Glyph::LineEdit => {
+            fill(&[(5.0, 4.0), (5.0, 17.0), (8.5, 13.5)]);
+            fill(&[(5.0, 4.0), (8.5, 13.5), (14.0, 13.0)]);
+            line(&[(8.5, 13.5), (11.5, 19.0)]);
+            p.rect_stroke(
+                Rect::from_center_size(pt(17.5, 17.5), egui::vec2(5.0 * s, 5.0 * s)),
+                1.0 * s,
+                st,
+                egui::StrokeKind::Middle,
+            );
+        }
+        Glyph::LineWidth => {
+            // A tapered stroke: thin on the left, thick on the right.
+            let n = 16;
+            let mid = |t: f32| {
+                (
+                    4.0 + 16.0 * t,
+                    15.0 - 6.0 * (std::f32::consts::PI * t * 0.9).sin(),
+                )
+            };
+            for i in 0..n {
+                let (t0, t1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
+                let (a, b) = (mid(t0), mid(t1));
+                let (w0, w1) = (0.3 + 3.2 * t0, 0.3 + 3.2 * t1);
+                fill(&[
+                    (a.0, a.1 - w0),
+                    (b.0, b.1 - w1),
+                    (b.0, b.1 + w1),
+                    (a.0, a.1 + w0),
+                ]);
+            }
+        }
+        Glyph::LineLayer => {
+            let curve: Vec<_> = (0..=16)
+                .map(|i| {
+                    let t = i as f32 / 16.0;
+                    (
+                        3.5 + 13.0 * t,
+                        19.0 - 9.0 * (std::f32::consts::PI * t * 0.8).sin(),
+                    )
+                })
+                .collect();
+            line(&curve);
+            p.rect_filled(
+                Rect::from_center_size(pt(3.5, 19.0), egui::vec2(3.6 * s, 3.6 * s)),
+                0.6 * s,
+                color,
+            );
+            line(&[(18.0, 3.5), (18.0, 10.5)]);
+            line(&[(14.5, 7.0), (21.5, 7.0)]);
         }
         Glyph::Clear => {
             p.rect_stroke(

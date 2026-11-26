@@ -11,6 +11,11 @@ pub enum Action {
     ToolEraser,
     ToolEyedropper,
     ToolFill,
+    ToolLineCurve,
+    ToolLineFree,
+    ToolLineEdit,
+    ToolLineWidth,
+    NewLineLayer,
     SizeDown,
     SizeUp,
     HardnessDown,
@@ -63,12 +68,14 @@ pub enum Group {
     Edit,
     Layers,
     View,
+    Lines,
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [
+    pub const ALL: [Group; 7] = [
         Group::Tools,
         Group::Brush,
+        Group::Lines,
         Group::File,
         Group::Edit,
         Group::Layers,
@@ -82,6 +89,7 @@ impl Group {
             Group::Edit => "help.group.edit",
             Group::Layers => "help.group.layers",
             Group::View => "help.group.view",
+            Group::Lines => "help.group.lines",
         }
     }
 }
@@ -140,6 +148,31 @@ pub static TABLE: &[Shortcut] = &[
         keys: &[k(NONE, Key::F)],
         label: "tool.fill",
         group: Group::Tools,
+    },
+    // Shift variants first: plain keys also match with Shift held.
+    Shortcut {
+        action: Action::ToolLineFree,
+        keys: &[k(SHIFT, Key::L)],
+        label: "tool.line_free",
+        group: Group::Lines,
+    },
+    Shortcut {
+        action: Action::ToolLineCurve,
+        keys: &[k(NONE, Key::L)],
+        label: "tool.line_curve",
+        group: Group::Lines,
+    },
+    Shortcut {
+        action: Action::ToolLineEdit,
+        keys: &[k(NONE, Key::K)],
+        label: "tool.line_edit",
+        group: Group::Lines,
+    },
+    Shortcut {
+        action: Action::ToolLineWidth,
+        keys: &[k(NONE, Key::T)],
+        label: "tool.line_width",
+        group: Group::Lines,
     },
     Shortcut {
         action: Action::SwapColors,
@@ -280,6 +313,12 @@ pub static TABLE: &[Shortcut] = &[
         group: Group::Edit,
     },
     Shortcut {
+        action: Action::NewLineLayer,
+        keys: &[k(CMD_SHIFT, Key::L)],
+        label: "menu.layer.new_lines",
+        group: Group::Layers,
+    },
+    Shortcut {
         action: Action::NewLayer,
         keys: &[k(CMD_SHIFT, Key::N)],
         label: "menu.layer.new",
@@ -357,6 +396,26 @@ pub static GESTURES: &[(&str, &str, Group)] = &[
     ("Alt + help.key.click", "help.gesture.pick", Group::Tools),
     ("help.key.pinch", "help.gesture.pinch", Group::View),
     ("Esc", "help.gesture.esc", Group::Edit),
+    ("help.key.click", "help.gesture.line_point", Group::Lines),
+    (
+        "Shift + help.key.click",
+        "help.gesture.line_corner",
+        Group::Lines,
+    ),
+    ("Enter", "help.gesture.line_finish", Group::Lines),
+    ("Backspace", "help.gesture.line_back", Group::Lines),
+    ("help.key.drag", "help.gesture.line_drag", Group::Lines),
+    (
+        "Ctrl + help.key.click",
+        "help.gesture.line_insert",
+        Group::Lines,
+    ),
+    (
+        "Alt + help.key.click",
+        "help.gesture.line_split",
+        Group::Lines,
+    ),
+    ("Del", "help.gesture.line_delete", Group::Lines),
 ];
 
 /// Human friendly key name: symbols instead of egui's `OpenBracket` style names.
@@ -409,4 +468,59 @@ pub fn first_text(ctx: &eframe::egui::Context, a: Action) -> String {
         .and_then(|s| s.keys.first())
         .map(|k| shortcut_text(ctx, k))
         .unwrap_or_default()
+}
+
+/// Every key of the table in the order it must be checked: egui ignores extra Shift/Alt
+/// when matching, so more specific shortcuts (more modifiers) go first; ties keep the
+/// table order.
+pub fn dispatch_order() -> Vec<(Action, KeyboardShortcut)> {
+    let mods = |k: &KeyboardShortcut| {
+        let m = k.modifiers;
+        m.shift as u8 + m.alt as u8 + (m.command || m.ctrl || m.mac_cmd) as u8
+    };
+    let mut all: Vec<(Action, KeyboardShortcut)> = TABLE
+        .iter()
+        .flat_map(|s| s.keys.iter().map(move |k| (s.action, *k)))
+        .collect();
+    all.sort_by_key(|(_, k)| std::cmp::Reverse(mods(k)));
+    all
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcuts_do_not_shadow_each_other() {
+        // egui ignores extra Shift/Alt when matching, so a key with fewer modifiers that
+        // comes first in the table would steal a more specific one.
+        let order = dispatch_order();
+        let all: Vec<(usize, &KeyboardShortcut)> =
+            order.iter().enumerate().map(|(i, (_, k))| (i, k)).collect();
+        for (i, a) in &all {
+            for (j, b) in &all {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    !(a.logical_key == b.logical_key && a.modifiers == b.modifiers),
+                    "duplicate shortcut {a:?}"
+                );
+                // a earlier and less specific than b → would shadow b.
+                if i < j
+                    && a.logical_key == b.logical_key
+                    && b.modifiers.matches_logically(a.modifiers)
+                {
+                    panic!("{a:?} (position {i}) shadows {b:?} (position {j})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_tool_has_a_shortcut() {
+        for t in crate::app::Tool::ALL {
+            assert!(TABLE.iter().any(|s| s.action == t.action()), "{t:?}");
+        }
+    }
 }

@@ -10,6 +10,7 @@ mod demo;
 mod fonts;
 mod icons;
 mod jobs;
+mod linetools;
 mod placing;
 mod settings;
 mod shortcuts;
