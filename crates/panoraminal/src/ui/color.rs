@@ -4,7 +4,7 @@ use super::widgets::{slider_row, toggle};
 use crate::app::{hex, parse_hex, PanoApp, Tool};
 use crate::theme::{self, with_alpha};
 use eframe::egui::ecolor::Hsva;
-use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
+use eframe::egui::{self, Color32, Mesh, Pos2, Sense, Shape, Stroke, Vec2};
 use panoraminal_core::ToolKind;
 use panoraminal_i18n::tr;
 
@@ -237,20 +237,21 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
                 super::brushlib::library(app, ui);
                 ui.add_space(4.0);
             }
-            let Some(b) = app.brush_mut() else { return };
             if !custom {
-                // Preview of the brush tip.
-                let (r, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::hover());
-                brush_preview(ui, r, b.size, b.hardness, b.opacity, kind.is_eraser(), &pal);
+                super::paintui::styles(app, ui, kind);
+                ui.add_space(4.0);
             }
+            let Some(b) = app.brush_mut() else { return };
             slider_row(ui, tr("brush.size"), &mut b.size, 1.0..=1000.0, " px", true);
             let mut op = b.opacity * 100.0;
             if slider_row(ui, tr("brush.opacity"), &mut op, 1.0..=100.0, "%", false).changed() {
                 b.opacity = op / 100.0;
             }
             let mut fl = b.flow * 100.0;
-            if slider_row(ui, tr("brush.flow"), &mut fl, 1.0..=100.0, "%", false).changed() {
+            if slider_row(ui, tr("brush.flow"), &mut fl, 1.0..=100.0, "%", false)
+                .on_hover_text(tr("brush.flow_tip"))
+                .changed()
+            {
                 b.flow = fl / 100.0;
             }
             if !custom {
@@ -260,6 +261,28 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
                     b.hardness = hd / 100.0;
                 }
             }
+            if !custom {
+                egui::CollapsingHeader::new(tr("tip.title"))
+                    .id_salt(("brush_tip", kind.id()))
+                    .default_open(kind == ToolKind::Brush)
+                    .show(ui, |ui| super::paintui::tip_shapes(app, ui, kind));
+            }
+            let Some(b) = app.brush_mut() else { return };
+            if !kind.is_eraser() {
+                egui::CollapsingHeader::new(tr("mix.title"))
+                    .id_salt(("brush_mix", kind.id()))
+                    .default_open(kind == ToolKind::Brush)
+                    .show(ui, |ui| super::paintui::mixing(ui, &pal, b, pen_pressure));
+            }
+            if kind == ToolKind::Airbrush {
+                egui::CollapsingHeader::new(tr("spray.title"))
+                    .id_salt("brush_spray")
+                    .default_open(true)
+                    .show(ui, |ui| super::paintui::spray(ui, &pal, b));
+            }
+            egui::CollapsingHeader::new(tr("tex.title"))
+                .id_salt(("brush_tex", kind.id()))
+                .show(ui, |ui| super::paintui::texture(ui, &pal, b));
             egui::CollapsingHeader::new(tr("brush.advanced"))
                 .id_salt("brush_adv")
                 .show(ui, |ui| {
@@ -271,6 +294,7 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
                     }
                     let mut sm = b.smoothing * 100.0;
                     if slider_row(ui, tr("brush.smoothing"), &mut sm, 0.0..=95.0, "%", false)
+                        .on_hover_text(tr("brush.smoothing_tip"))
                         .changed()
                     {
                         b.smoothing = sm / 100.0;
@@ -289,6 +313,7 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
                         {
                             b.min_size = ms / 100.0;
                         }
+                        super::paintui::pressure_extra(ui, b);
                     });
                     toggle(ui, &pal, &mut b.polar_correction, tr("brush.polar"))
                         .on_hover_text(tr("brush.polar_tip"));
@@ -324,51 +349,4 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
             );
         }
     }
-}
-
-fn brush_preview(
-    ui: &egui::Ui,
-    r: Rect,
-    size: f32,
-    hardness: f32,
-    opacity: f32,
-    eraser: bool,
-    pal: &crate::theme::Palette,
-) {
-    let p = ui.painter();
-    p.rect_filled(
-        r,
-        8.0,
-        if pal.dark {
-            Color32::from_rgb(0x05, 0x0b, 0x22)
-        } else {
-            Color32::from_rgb(0xee, 0xf5, 0xfd)
-        },
-    );
-    let rad = (size * 0.5).clamp(1.0, r.height() * 0.45);
-    let c = r.center();
-    let col = if eraser { pal.text_weak } else { pal.accent };
-    let steps = 12;
-    for i in (0..steps).rev() {
-        let k = (i + 1) as f32 / steps as f32;
-        let edge = hardness.clamp(0.0, 0.99);
-        let a = if k <= edge {
-            1.0
-        } else {
-            1.0 - (k - edge) / (1.0 - edge)
-        };
-        p.circle_filled(
-            c,
-            rad * k,
-            with_alpha(col, (a * opacity / steps as f32 * 3.0).min(1.0)),
-        );
-    }
-    p.circle_stroke(c, rad, Stroke::new(1.0, with_alpha(pal.neon, 0.7)));
-    p.text(
-        r.right_center() - Vec2::new(8.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        format!("{:.0} px", size),
-        egui::FontId::proportional(12.0),
-        pal.text_weak,
-    );
 }

@@ -6,6 +6,7 @@ pub mod color;
 pub mod dialogs;
 pub mod help;
 pub mod layers;
+pub mod paintui;
 pub mod place;
 pub mod widgets;
 

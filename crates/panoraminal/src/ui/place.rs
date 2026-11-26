@@ -547,9 +547,9 @@ pub fn panel(app: &mut PanoApp, ctx: &egui::Context) {
                                 .enumerate()
                                 {
                                     ui.label(tr(key));
-                                    for c in 0..2 {
+                                    for v in w.corners[i].iter_mut() {
                                         ui.add(
-                                            egui::DragValue::new(&mut w.corners[i][c])
+                                            egui::DragValue::new(v)
                                                 .speed(0.005)
                                                 .range(-4.0..=4.0)
                                                 .max_decimals(3),

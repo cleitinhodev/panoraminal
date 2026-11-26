@@ -19,16 +19,18 @@ pub mod document;
 pub mod fill;
 pub mod history;
 pub mod math;
+pub mod paint;
 pub mod place;
 pub mod rect;
 pub mod tip;
 pub mod warp;
 
 pub use blend::BlendMode;
-pub use brush::{BrushSettings, StrokeEngine, ToolKind};
+pub use brush::{builtin_styles, BrushSettings, BuiltinStyle, StrokeEngine, ToolKind};
 pub use document::{Document, Layer, LayerId};
 pub use history::{Edit, History};
 pub use math::{Camera, FlatView, Vec3};
+pub use paint::{PaperTexture, TipShape};
 pub use rect::{DirtyRegion, IRect};
 pub use tip::{PreparedTip, TipDynamics, TipImage};
 
