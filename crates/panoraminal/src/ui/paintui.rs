@@ -324,11 +324,6 @@ pub fn tip_shapes(app: &mut PanoApp, ui: &mut egui::Ui, kind: ToolKind) {
     let Some(b) = app.brushes.get_mut(&kind) else {
         return;
     };
-    ui.label(
-        RichText::new(tr("tip.title"))
-            .size(12.0)
-            .color(pal.text_weak),
-    );
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         for shape in TipShape::ALL {

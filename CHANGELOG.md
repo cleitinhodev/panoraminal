@@ -3,6 +3,28 @@
 All notable changes to Panoraminal are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-11-26
+
+### Added
+- **Oil brush** — the Brush now mixes with the colours already on the layer, like oil paint on a real canvas: painting yellow over blue gives a broken green, over red an orange, with bristle streaks and dry gaps.
+  - New parameters (SAI-inspired, our own implementation): **Blending** (how much of the colour under the brush mixes in), **Dilution** (thins the paint over transparent areas), **Persistence** (how long the picked-up colour stays in the brush — colour stretch), **Irregularity** (uneven, broken mix and dry-brush gaps along the bristles), **Mix like paint** (subtractive, Kubelka–Munk-style pigment mixing instead of RGB) and **Pressure controls blending**.
+  - Mixing strokes are painted straight into the layer with tile-based undo: undo/redo, `Esc` (cancel) and alpha lock work as usual; the eraser never mixes.
+- **Airbrush particles** — the airbrush keeps its soft default and gains **Spray** (0 = smooth, 100 % = particles only), particle **density**, **size**, **size variation**, **spread** and **centre weight**. Particles are reproducible (seeded per stroke), wrap across the seam and keep their shape near the poles.
+- **Tip shapes** for the pen, brush, airbrush and eraser — round, flat (chisel), bristles, fan, chalk, sponge, splatter and square — in a selector with previews, with tip **angle** and **follow the stroke**. All tips are procedural.
+- **Paper textures** — canvas, paper, grain and sponge, with strength and scale. Noise textures are evaluated on the sphere (seamless and undistorted at the poles); the canvas weave tiles across the seam.
+- **Styles** — built-in styles per tool with a **live preview stroke** over two colour bands: Brush (Oil, Dry brush, Blender, Watercolour, Classic), Airbrush (Soft, Spray, Splatter, Grainy), Pen (Ink, Pencil, Marker), Eraser (Hard, Soft, Textured). **Save style** stores your own settings per tool (right-click to delete).
+- **Pressure curve** (soft ↔ firm) for size, density and blending, and **minimum density**.
+- Help: a card about styles, mixing and particles, and a new 360° tip. All new strings in the 8 languages.
+- Command line: `--paint-demo oil|spray` (sample strokes, used for the screenshots).
+
+### Changed
+- The Brush defaults to the **Oil** style. Settings saved by 1.0–1.2 are upgraded once: your brush size, opacity, smoothing and pressure options are kept, and the previous behaviour is one click away as the **Classic** style. Pen, airbrush, eraser and custom brushes paint exactly as before; new settings default to neutral values.
+- A tip that follows the stroke direction (custom brushes included) now orients its first dab along the stroke instead of to the east.
+- The CJK font subset includes the new strings.
+
+### Compatibility
+- `.pano` projects are unchanged; old projects open as before. Brush settings files from earlier versions load with neutral defaults for the new parameters.
+
 ## [1.2.0] — 2026-10-31
 
 ### Added
@@ -70,6 +92,7 @@ First release of **Panoraminal**, the successor of the Paint360 prototype, rewri
 - Packages: Windows installer (NSIS) and portable zip; Linux AppImage, `.deb` and `.tar.gz`; macOS app bundle (built by CI).
 - CI (tests, clippy, rustfmt) and tagged release workflows on GitHub Actions.
 
+[1.3.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.3.0
 [1.2.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cleitinhodev/panoraminal/releases/tag/v1.0.0

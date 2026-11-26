@@ -321,7 +321,15 @@ impl PanoApp {
             }
         }
         match app.cli.paint_demo.as_deref() {
-            Some("spray") => app.primary = [0xff, 0x4d, 0x9d],
+            Some("spray") => {
+                app.primary = [0xff, 0x4d, 0x9d];
+                if let Some(st) = panoraminal_core::builtin_styles(ToolKind::Airbrush)
+                    .into_iter()
+                    .find(|s| s.id == "spray")
+                {
+                    app.brushes.insert(ToolKind::Airbrush, st.settings);
+                }
+            }
             Some(_) => app.primary = [0xff, 0xd8, 0x1a],
             None => {}
         }

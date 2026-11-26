@@ -33,6 +33,7 @@ It is the successor of the *Paint360* prototype, rebuilt from scratch as a real 
 - **Custom brushes** (new in 1.1) — a brush library with thumbnails, live preview stroke, rename, categories, favourites and search. Import **Photoshop `.abr`** (v1/v2 and v6+, sampled tips with their presets), **GIMP `.gbr` / `.gih`** and any **PNG / JPEG / WebP** as a tip. Dynamics: spacing, angle, roundness, size/angle/roundness jitter, scatter, count, opacity/flow jitter, random flips and pen pressure. Stamps are projected on the sphere, so they look right across the seam and at the poles. Brushes used in a project are embedded in the `.pano` file.
 - **Place images in the scene** (new in 1.1) — drop, paste or insert a photo/logo and it floats over the panorama as a non-destructive object: move, scale (uniform or free), rotate, flip and fade it with on-canvas handles in both views. Two projections: **Wrap** (bent onto the sphere like a sticker) and **Persistent** (a flat picture projected from the centre, undistorted from its anchor direction, with *Re-aim to view*). Live GPU preview, full-quality bake on `Enter`, *Place as new layer*, `Esc` to cancel, undo/redo.
 - **Distort / perspective** (new in 1.2) — press `D` while placing an image and drag its **four corner pins** onto the corners of a wall, a screen or a floor: the image is mapped with a true perspective (homography), so it looks like part of the scene. In **Persistent** projection straight lines stay straight on the sphere; `W` adds a **4×4 mesh warp** for curved surfaces. `Shift` locks an axis, edge handles move two pins at once, pin coordinates can be typed in, *Reset distortion* starts over, and folded or collapsed shapes are refused with a warning. Distortion is part of the placement's undo and survives moving, scaling, rotating and switching projection.
+- **Paint styles, oil mixing and particles** (new in 1.3) — the **Brush** is now an **oil brush** that picks up the colours on the layer and mixes them in a broken, uneven way, like real paint on canvas (yellow over blue turns green, over red turns orange). SAI-inspired parameters: **blending**, **dilution**, **persistence** (colour stretch), **irregularity** (bristle streaks and dry gaps), pigment-like (subtractive) mixing and pressure-controlled blending. The **Airbrush** keeps its soft look and gains **spray particles** (amount, density, particle size, size variation, spread, centre weight). **8 tip shapes** (round, flat, bristles, fan, chalk, sponge, splatter, square) in a selector with previews, **paper textures** (canvas, paper, grain, sponge) with strength and scale, a **pressure curve** and minimum density. Every tool has **built-in styles** (Oil, Dry brush, Blender, Watercolour, Classic; Soft, Spray, Splatter, Grainy; Ink, Pencil, Marker; three erasers) with a live preview stroke, and you can **save your own styles**. Mixing, textures and particles are computed on the sphere: seamless at 0°/360° and correct near the poles.
 - **Pen pressure** for size and/or opacity (see [limitations](#known-limitations)).
 - **Straight lines** with `Shift`+click (great circles), **eyedropper** (`I` or `Alt`+click), **360°-aware flood fill** that wraps across the seam.
 - **Layers** — up to 64, with drag & drop reordering, rename, visibility, alpha lock, opacity and 9 blend modes (normal, multiply, screen, overlay, darken, lighten, add/glow, difference, soft light), live thumbnails.
@@ -48,6 +49,8 @@ It is the successor of the *Paint360* prototype, rebuilt from scratch as a real 
 
 | | |
 |---|---|
+| ![Oil brush: yellow mixing over blue and red (dark theme, Portuguese)](docs/screenshots/oil-mixing-dark-pt.png) | ![Oil brush, light theme](docs/screenshots/oil-mixing-light-pt.png) |
+| ![Airbrush particles: spray, splatter and grain](docs/screenshots/airbrush-particles-dark-pt.png) | ![Styles and tip shape selector](docs/screenshots/tip-shapes-dark-pt.png) |
 | ![Corner pins on a room wall (Persistent projection)](docs/screenshots/place-distort.png) | ![Merged onto the wall](docs/screenshots/place-distort-merged.png) |
 | ![Mesh warp](docs/screenshots/place-distort-warp.png) | ![Corner pins in the flat view](docs/screenshots/place-distort-flat.png) |
 | ![Custom brush library](docs/screenshots/custom-brushes.png) | ![Placing an image (Persistent projection)](docs/screenshots/place-persistent.png) |
@@ -132,6 +135,7 @@ panoraminal [FILE]                 open a .pano project or an image
   --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
                                    float a demo picture (wall* = pinned onto a
                                    synthetic room, used for the screenshots)
+  --paint-demo <oil|spray>         start with sample strokes of the paint styles
   --version, --help
 ```
 
@@ -140,6 +144,8 @@ panoraminal [FILE]                 open a .pano project or an image
 - **Pen pressure** comes from the OS through winit. It works with Windows Ink / pointer-pen devices and touch-force devices; Wintab-only tablet drivers and many X11/Wayland tablets don't report pressure to winit yet — strokes then use full pressure.
 - **ABR import** reads sampled and computed tips and the common presets (see Features). Dual brush, texture, bristle/erodible tips, colour dynamics, wet edges and noise have no equivalent yet: they are skipped and listed in a notice on the brush. Colour tips are used as masks (painted with the current colour). The importer is tested with synthesized files; please open an issue with any `.abr` that doesn't load.
 - **Distortion in Wrap projection** applies the homography in the patch's angular (tangent) coordinates, so it is only approximately perspective-correct for large patches; use **Persistent** for walls and other flat surfaces. The mesh warp is a fixed 4×4 grid (bilinear cells); the live preview of a distorted image uses at most 2048 px (the merge uses the full image).
+- **Oil mixing** picks up colours from the **active layer** only (paint the base colours and the new strokes on the same layer). Mixing strokes are painted directly into the layer (8-bit), so very low flow values build up in visible steps. The pigment mix is an approximation (a single-constant Kubelka–Munk model), not a spectral simulation. Mixing runs on the CPU, so very large oil brushes (several hundred pixels) can lag on slow machines.
+- Tip shapes and paper textures are procedural (no bitmap textures can be loaded yet); custom brushes keep their own tips but can use mixing, textures and spray.
 - Placed images are limited to 4096 px on the longest side (larger images are downscaled).
 - Maximum document size is 8192 × 4096 (the GPU texture limit of most cards); 64 layers.
 - The macOS build is produced by CI and is not code-signed or notarised.
