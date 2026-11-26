@@ -248,7 +248,7 @@
   "lines.new_stroke": "新しい線",
   "lines.no_layer": "ラインレイヤーを選択するか作成してください。",
   "lines.point": "点 {n} / {of}",
-  "lines.point_width": "点の太さ",
+  "lines.point_width": "太さ",
   "lines.pressure": "筆圧 → 太さ",
   "lines.rasterize": "通常に変換",
   "lines.rasterize_tip": "線をピクセルに変換して上から描けるようにします（取り消し可）",

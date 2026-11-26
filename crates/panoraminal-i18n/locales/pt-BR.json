@@ -248,7 +248,7 @@
   "lines.new_stroke": "Novas linhas",
   "lines.no_layer": "Selecione uma camada de linhas ou crie uma.",
   "lines.point": "Ponto {n} de {of}",
-  "lines.point_width": "Espessura do ponto",
+  "lines.point_width": "Espessura",
   "lines.pressure": "Pressão da caneta → espessura",
   "lines.rasterize": "Converter em normal",
   "lines.rasterize_tip": "Transforma as linhas em pixels para pintar por cima (dá para desfazer)",

@@ -248,7 +248,7 @@
   "lines.new_stroke": "新线条",
   "lines.no_layer": "请选择或新建一个线条图层。",
   "lines.point": "锚点 {n} / {of}",
-  "lines.point_width": "锚点粗细",
+  "lines.point_width": "粗细",
   "lines.pressure": "笔压 → 粗细",
   "lines.rasterize": "转换为普通",
   "lines.rasterize_tip": "将线条转换为像素以便在上面绘画（可撤销）",

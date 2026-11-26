@@ -248,7 +248,7 @@
   "lines.new_stroke": "New lines",
   "lines.no_layer": "Select a line layer or create one.",
   "lines.point": "Point {n} of {of}",
-  "lines.point_width": "Point thickness",
+  "lines.point_width": "Thickness",
   "lines.pressure": "Pen pressure → thickness",
   "lines.rasterize": "Convert to normal",
   "lines.rasterize_tip": "Turns the lines into pixels so you can paint over them (undoable)",

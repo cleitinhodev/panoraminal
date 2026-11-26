@@ -248,7 +248,7 @@
   "lines.new_stroke": "Nuove linee",
   "lines.no_layer": "Seleziona un livello di linee o creane uno.",
   "lines.point": "Punto {n} di {of}",
-  "lines.point_width": "Spessore del punto",
+  "lines.point_width": "Spessore",
   "lines.pressure": "Pressione penna → spessore",
   "lines.rasterize": "Converti in normale",
   "lines.rasterize_tip": "Trasforma le linee in pixel per dipingerci sopra (annullabile)",

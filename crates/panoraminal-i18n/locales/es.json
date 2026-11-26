@@ -248,7 +248,7 @@
   "lines.new_stroke": "Nuevas líneas",
   "lines.no_layer": "Selecciona una capa de líneas o crea una.",
   "lines.point": "Punto {n} de {of}",
-  "lines.point_width": "Grosor del punto",
+  "lines.point_width": "Grosor",
   "lines.pressure": "Presión del lápiz → grosor",
   "lines.rasterize": "Convertir en normal",
   "lines.rasterize_tip": "Convierte las líneas en píxeles para pintar encima (se puede deshacer)",

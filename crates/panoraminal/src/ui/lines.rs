@@ -363,6 +363,7 @@ pub fn panel(app: &mut PanoApp, ui: &mut egui::Ui, tool: LineTool) {
                         &[("n", &(pi + 1)), ("of", &s.points.len())],
                     ))
                     .size(12.5)
+                    .color(pal.text)
                     .strong(),
                 );
                 let p = &mut s.points[pi];

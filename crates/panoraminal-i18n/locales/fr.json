@@ -248,7 +248,7 @@
   "lines.new_stroke": "Nouvelles lignes",
   "lines.no_layer": "Sélectionnez un calque de lignes ou créez-en un.",
   "lines.point": "Point {n} sur {of}",
-  "lines.point_width": "Épaisseur du point",
+  "lines.point_width": "Épaisseur",
   "lines.pressure": "Pression du stylet → épaisseur",
   "lines.rasterize": "Convertir en normal",
   "lines.rasterize_tip": "Transforme les lignes en pixels pour peindre dessus (annulable)",

@@ -248,7 +248,7 @@
   "lines.new_stroke": "Neue Linien",
   "lines.no_layer": "Wähle eine Linienebene oder erstelle eine.",
   "lines.point": "Punkt {n} von {of}",
-  "lines.point_width": "Punktstärke",
+  "lines.point_width": "Stärke",
   "lines.pressure": "Stiftdruck → Stärke",
   "lines.rasterize": "In normal umwandeln",
   "lines.rasterize_tip": "Wandelt die Linien in Pixel um, damit du darüber malen kannst (rückgängig machbar)",
