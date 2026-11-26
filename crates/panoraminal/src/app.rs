@@ -5,7 +5,7 @@ use crate::icons::Icons;
 use crate::jobs::{JobResult, Jobs};
 use crate::linetools::LineTool;
 use crate::settings::{self, AnimChoice, Settings, ThemeChoice};
-use crate::shortcuts::{Action, TABLE};
+use crate::shortcuts::Action;
 use crate::theme::{self, Palette};
 use eframe::egui::{self, Pos2, Rect};
 use panoraminal_core::document::Background;
