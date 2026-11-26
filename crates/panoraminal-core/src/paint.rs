@@ -125,14 +125,14 @@ impl TipShape {
                 }
             }
             TipShape::Bristle => {
-                // ~28 bristles of varying thickness and strength inside a disc.
-                for _ in 0..28 {
+                // a full clump of ~56 bristles of varying thickness and strength
+                for _ in 0..56 {
                     let a = rng.next() * TAU as f32;
-                    let rr = rng.next().sqrt() * 0.78;
+                    let rr = rng.next().sqrt() * 0.84;
                     let cx = c + a.cos() * rr * c;
                     let cy = c + a.sin() * rr * c;
-                    let r = c * (0.12 + 0.14 * rng.next());
-                    disc(&mut data, cx, cy, r, 0.55 + 0.45 * rng.next(), 0.35);
+                    let r = c * (0.1 + 0.14 * rng.next());
+                    disc(&mut data, cx, cy, r, 0.6 + 0.4 * rng.next(), 0.4);
                 }
             }
             TipShape::Fan => {

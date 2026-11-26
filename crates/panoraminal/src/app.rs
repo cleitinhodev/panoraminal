@@ -186,6 +186,8 @@ pub struct PanoApp {
     pub blib: crate::brushlib::BrushLib,
     /// An image being placed (not yet merged).
     pub floating: Option<crate::placing::Floating>,
+    /// Paint style controls (styles, tip shapes, previews).
+    pub paint_ui: crate::ui::paintui::PaintUi,
 }
 
 fn max_dim_for(device_max: u32) -> u32 {
@@ -229,7 +231,9 @@ impl PanoApp {
         for t in ToolKind::ALL {
             brushes.insert(t, s.brush(t));
         }
-        let doc = if cli.demo {
+        let doc = if let Some(m) = cli.paint_demo.as_deref() {
+            crate::demo::paint_demo(m, 4096.min(max_dim), 2048.min(max_dim / 2))
+        } else if cli.demo {
             crate::demo::build(4096.min(max_dim), 2048.min(max_dim / 2))
         } else {
             Document::new_blank(
@@ -301,6 +305,7 @@ impl PanoApp {
             view_anim: None,
             blib: crate::brushlib::BrushLib::load(cli.screenshot.is_none()),
             floating: None,
+            paint_ui: Default::default(),
             s,
             cli,
         };
@@ -314,6 +319,11 @@ impl PanoApp {
             if let Some(k) = ToolKind::ALL.into_iter().find(|k| k.id() == t) {
                 app.tool = Tool::Paint(k);
             }
+        }
+        match app.cli.paint_demo.as_deref() {
+            Some("spray") => app.primary = [0xff, 0x4d, 0x9d],
+            Some(_) => app.primary = [0xff, 0xd8, 0x1a],
+            None => {}
         }
         if app.cli.demo {
             app.cam = Camera {

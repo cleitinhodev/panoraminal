@@ -22,6 +22,8 @@ pub struct Cli {
     pub tool: Option<String>,
     /// Float a generated demo image: wrap or gnomonic.
     pub place_demo: Option<String>,
+    /// Start with sample strokes of the paint styles: oil or spray.
+    pub paint_demo: Option<String>,
 }
 
 const USAGE: &str = "Panoraminal — paint 360° panoramas
@@ -45,6 +47,7 @@ OPTIONS:
     --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
                                   Float a generated picture for placing (docs/tests);
                                   wall* = corner-pinned onto a synthetic room
+    --paint-demo <oil|spray>      Start with sample strokes of the paint styles (docs/tests)
     -h, --help                    Show this help
     -V, --version                 Show the version";
 
@@ -90,6 +93,7 @@ impl Cli {
                 }
                 "--tool" => c.tool = Some(val("--tool")?),
                 "--place-demo" => c.place_demo = Some(val("--place-demo")?),
+                "--paint-demo" => c.paint_demo = Some(val("--paint-demo")?),
                 "--demo" => c.demo = true,
                 "--no-splash" => c.no_splash = true,
                 s if s.starts_with('-') && s.len() > 1 && !std::path::Path::new(s).exists() => {

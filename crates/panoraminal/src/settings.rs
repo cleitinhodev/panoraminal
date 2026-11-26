@@ -61,7 +61,25 @@ pub struct Settings {
     pub embed_brushes: bool,
     /// Last projection used when placing an image.
     pub place_projection: Projection,
+    /// Generation of the brush styles the saved brushes were made with:
+    /// 0 = Panoraminal 1.0–1.2, 1 = 1.3 (oil brush). Missing in old files.
+    #[serde(default)]
+    pub brush_styles_rev: u32,
+    /// Styles saved by the user.
+    pub user_styles: Vec<UserStyle>,
 }
+
+/// A brush style saved by the user for one tool.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserStyle {
+    /// Tool id (`pen`, `brush`, `airbrush`, `eraser`, `custom`).
+    pub tool: String,
+    pub name: String,
+    pub settings: BrushSettings,
+}
+
+/// Current generation of the brush styles (see [`Settings::brush_styles_rev`]).
+pub const BRUSH_STYLES_REV: u32 = 1;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -94,6 +112,8 @@ impl Default for Settings {
             custom_brush: None,
             embed_brushes: true,
             place_projection: Projection::Gnomonic,
+            brush_styles_rev: BRUSH_STYLES_REV,
+            user_styles: Vec::new(),
         }
     }
 }
@@ -148,7 +168,7 @@ impl Settings {
         }
     }
 
-    fn sanitized(mut self) -> Self {
+    pub(crate) fn sanitized(mut self) -> Self {
         self.ui_scale = if self.ui_scale.is_finite() {
             self.ui_scale.clamp(0.75, 2.0)
         } else {
@@ -168,6 +188,21 @@ impl Settings {
         self.swatches.truncate(24);
         for b in self.brushes.values_mut() {
             b.clamp();
+        }
+        if self.brush_styles_rev < 1 {
+            // 1.3: the brush becomes an oil brush. Keep the user's size, opacity,
+            // smoothing and pressure options; the classic brush is still a style.
+            if let Some(b) = self.brushes.get_mut(ToolKind::Brush.id()) {
+                *b = b.with_style_of(&BrushSettings::preset(ToolKind::Brush));
+            }
+        }
+        self.brush_styles_rev = self.brush_styles_rev.max(BRUSH_STYLES_REV);
+        self.user_styles
+            .retain(|u| ToolKind::ALL.iter().any(|t| t.id() == u.tool));
+        self.user_styles.truncate(200);
+        for u in &mut self.user_styles {
+            u.settings.clamp();
+            u.name = u.name.chars().take(40).collect();
         }
         self
     }
@@ -240,4 +275,74 @@ fn windows_animations_disabled() -> bool {
     // SAFETY: SPI_GETCLIENTAREAANIMATION writes a BOOL into the provided pointer.
     let ok = unsafe { SystemParametersInfoW(0x1042, 0, &mut enabled as *mut i32 as *mut _, 0) };
     ok != 0 && enabled == 0
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    #[test]
+    fn settings_from_1_2_upgrade_the_brush_only() {
+        let json = r#"{"theme":"Dark","brushes":{
+            "brush":{"size":77.0,"opacity":0.5,"flow":1.0,"hardness":0.6,"spacing":0.12,
+                     "smoothing":0.4,"pressure_size":true,"pressure_opacity":false,
+                     "min_size":0.08,"polar_correction":true},
+            "airbrush":{"size":140.0,"opacity":1.0,"flow":0.08,"hardness":0.0,"spacing":0.06,
+                     "smoothing":0.2,"pressure_size":false,"pressure_opacity":true,
+                     "min_size":0.08,"polar_correction":true}}}"#;
+        let s: Settings = serde_json::from_str::<Settings>(json).unwrap().sanitized();
+        assert_eq!(s.brush_styles_rev, BRUSH_STYLES_REV);
+        let b = s.brush(ToolKind::Brush);
+        assert!(b.is_wet(ToolKind::Brush), "the brush becomes an oil brush");
+        assert_eq!(
+            (b.size, b.opacity, b.smoothing),
+            (77.0, 0.5, 0.4),
+            "user values kept"
+        );
+        assert_eq!(
+            s.brush(ToolKind::Airbrush),
+            BrushSettings::classic(ToolKind::Airbrush),
+            "the airbrush is unchanged"
+        );
+        // once upgraded, the brush is never touched again
+        let again: Settings = serde_json::from_str::<Settings>(&serde_json::to_string(&s).unwrap())
+            .unwrap()
+            .sanitized();
+        assert_eq!(again.brush(ToolKind::Brush), b);
+        let mut classic = s.clone();
+        classic
+            .brushes
+            .insert("brush".into(), BrushSettings::classic(ToolKind::Brush));
+        let c: Settings =
+            serde_json::from_str::<Settings>(&serde_json::to_string(&classic).unwrap())
+                .unwrap()
+                .sanitized();
+        assert_eq!(
+            c.brush(ToolKind::Brush),
+            BrushSettings::classic(ToolKind::Brush)
+        );
+    }
+
+    #[test]
+    fn user_styles_round_trip() {
+        let mut s = Settings::default();
+        s.user_styles.push(UserStyle {
+            tool: "airbrush".into(),
+            name: "My spray".into(),
+            settings: BrushSettings {
+                particles: 0.7,
+                ..BrushSettings::classic(ToolKind::Airbrush)
+            },
+        });
+        s.user_styles.push(UserStyle {
+            tool: "bogus".into(),
+            name: "x".into(),
+            settings: BrushSettings::default(),
+        });
+        let back = serde_json::from_str::<Settings>(&serde_json::to_string(&s).unwrap())
+            .unwrap()
+            .sanitized();
+        assert_eq!(back.user_styles.len(), 1);
+        assert_eq!(back.user_styles[0], s.user_styles[0]);
+    }
 }

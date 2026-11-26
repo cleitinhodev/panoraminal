@@ -307,7 +307,7 @@ pub fn builtin_styles(tool: ToolKind) -> Vec<BuiltinStyle> {
                     tip_shape: TipShape::Bristle,
                     follow_stroke: true,
                     blending: 0.5,
-                    persistence: 0.65,
+                    persistence: 0.55,
                     pigment: true,
                     irregularity: 0.5,
                     pressure_blend: true,

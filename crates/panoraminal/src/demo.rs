@@ -433,3 +433,212 @@ pub fn room_document(w: u32, h: u32) -> Document {
     d.layers[0].pixels.copy_from_slice(&px);
     d
 }
+
+/// `--paint-demo oil|spray`: a canvas with sample strokes of the 1.3 paint styles
+/// (oil mixing over blue and red, airbrush particles), facing the default camera.
+pub fn paint_demo(mode: &str, w: u32, h: u32) -> Document {
+    use panoraminal_core::{builtin_styles, PaperTexture};
+    let spray = mode.eq_ignore_ascii_case("spray");
+    let mut d = Document::new_blank(
+        w,
+        h,
+        if spray {
+            Background::Night
+        } else {
+            Background::White
+        },
+        tr("layer.background"),
+        &panoraminal_i18n::trf("layer.default_name", &[("n", &1)]),
+    );
+    if !spray {
+        // warm, slightly uneven primed canvas
+        let bg = &mut d.layers[0].pixels;
+        for (i, p) in bg.chunks_exact_mut(4).enumerate() {
+            let n = ((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 59) as u8;
+            p.copy_from_slice(&[244 - n, 238 - n, 226 - n, 255]);
+        }
+    }
+    let k = w as f32 / 4096.0;
+    let style = |tool: ToolKind, id: &str| {
+        builtin_styles(tool)
+            .into_iter()
+            .find(|s| s.id == id)
+            .map(|s| s.settings)
+            .unwrap_or_else(|| BrushSettings::classic(tool))
+    };
+    let mut eng = StrokeEngine::new();
+    let mut stroke = |d: &mut Document,
+                      tool: ToolKind,
+                      mut s: BrushSettings,
+                      size: f32,
+                      rgb: [u8; 3],
+                      pts: &[(f64, f64)]| {
+        s.size = size * k;
+        s.smoothing = 0.0;
+        let deg = |p: &(f64, f64)| dir_from_lonlat((180.0 + p.0).to_radians(), p.1.to_radians());
+        // densify so the stroke follows the curve
+        let mut path = Vec::new();
+        for win in pts.windows(2) {
+            for j in 0..12 {
+                let t = j as f64 / 12.0;
+                path.push((
+                    win[0].0 + (win[1].0 - win[0].0) * t,
+                    win[0].1 + (win[1].1 - win[0].1) * t,
+                ));
+            }
+        }
+        path.push(*pts.last().unwrap());
+        if eng.begin(d, tool, s, rgb, deg(&path[0]), 1.0) {
+            for (i, p) in path.iter().enumerate().skip(1) {
+                eng.add_point(deg(p), 1.0, i + 1 == path.len());
+                eng.flush(d);
+            }
+            eng.end(d);
+        }
+    };
+    let wave = |lat0: f64, amp: f64, l0: f64, l1: f64, f: f64| {
+        (0..=16)
+            .map(|i| {
+                let t = i as f64 / 16.0;
+                let lon = l0 + (l1 - l0) * t;
+                (lon, lat0 + amp * (t * f * std::f64::consts::TAU).sin())
+            })
+            .collect::<Vec<_>>()
+    };
+    if spray {
+        let soft = BrushSettings::classic(ToolKind::Airbrush);
+        stroke(
+            &mut d,
+            ToolKind::Airbrush,
+            soft,
+            150.0,
+            [0x1b, 0x99, 0xf9],
+            &wave(16.0, 3.0, -34.0, 34.0, 1.0),
+        );
+        stroke(
+            &mut d,
+            ToolKind::Airbrush,
+            style(ToolKind::Airbrush, "spray"),
+            120.0,
+            [0xff, 0x4d, 0x9d],
+            &wave(4.0, 4.0, -34.0, 34.0, 1.5),
+        );
+        stroke(
+            &mut d,
+            ToolKind::Airbrush,
+            style(ToolKind::Airbrush, "splatter"),
+            130.0,
+            [0xff, 0xd6, 0x4d],
+            &wave(-9.0, 3.0, -34.0, 34.0, 1.0),
+        );
+        let mut grain = style(ToolKind::Airbrush, "grainy");
+        grain.flow = 0.2;
+        stroke(
+            &mut d,
+            ToolKind::Airbrush,
+            grain,
+            140.0,
+            [0x3d, 0xdc, 0x97],
+            &wave(-21.0, 2.0, -34.0, 34.0, 1.0),
+        );
+    } else {
+        // base colours on the active layer (classic brush, big and flat)
+        let mut base = BrushSettings::classic(ToolKind::Brush);
+        base.hardness = 0.85;
+        base.pressure_size = false;
+        base.spacing = 0.05;
+        for (lat, col) in [(14.0, [0x1d, 0x4f, 0xd6]), (9.0, [0x1d, 0x4f, 0xd6])] {
+            stroke(
+                &mut d,
+                ToolKind::Brush,
+                base,
+                150.0,
+                col,
+                &wave(lat, 0.0, -36.0, -2.0, 1.0),
+            );
+        }
+        for lat in [14.0, 9.0] {
+            stroke(
+                &mut d,
+                ToolKind::Brush,
+                base,
+                150.0,
+                [0xd9, 0x24, 0x3a],
+                &wave(lat, 0.0, 3.0, 36.0, 1.0),
+            );
+        }
+        for lat in [-10.0, -15.0] {
+            stroke(
+                &mut d,
+                ToolKind::Brush,
+                base,
+                150.0,
+                [0x1d, 0x4f, 0xd6],
+                &wave(lat, 0.0, -36.0, -2.0, 1.0),
+            );
+            stroke(
+                &mut d,
+                ToolKind::Brush,
+                base,
+                150.0,
+                [0xd9, 0x24, 0x3a],
+                &wave(lat, 0.0, 3.0, 36.0, 1.0),
+            );
+        }
+        // yellow oil zig-zags over both colours
+        let oil = BrushSettings::preset(ToolKind::Brush);
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            oil,
+            70.0,
+            [0xff, 0xd8, 0x1a],
+            &wave(12.0, 3.5, -33.0, 33.0, 3.0),
+        );
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            oil,
+            55.0,
+            [0xff, 0xff, 0xff],
+            &wave(20.0, 1.5, -30.0, 30.0, 2.0),
+        );
+        // dry brush on the lower bands, then the blender drags blue into red
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            style(ToolKind::Brush, "dry_brush"),
+            80.0,
+            [0xff, 0xd8, 0x1a],
+            &wave(-12.0, 2.0, -33.0, -12.0, 1.0),
+        );
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            style(ToolKind::Brush, "dry_brush"),
+            80.0,
+            [0xff, 0xff, 0xff],
+            &wave(-13.0, 2.0, 14.0, 33.0, 1.0),
+        );
+        let mut wc = style(ToolKind::Brush, "watercolor");
+        wc.texture = PaperTexture::Paper;
+        wc.flow = 0.6;
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            wc,
+            90.0,
+            [0x2e, 0xb8, 0x5c],
+            &wave(-24.0, 1.5, -30.0, 30.0, 1.0),
+        );
+        stroke(
+            &mut d,
+            ToolKind::Brush,
+            style(ToolKind::Brush, "blender"),
+            60.0,
+            [0x1d, 0x4f, 0xd6],
+            &wave(-12.5, 0.0, -9.0, 12.0, 1.0),
+        );
+    }
+    d
+}
