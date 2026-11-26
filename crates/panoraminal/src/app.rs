@@ -1168,7 +1168,7 @@ impl PanoApp {
             if self.floating.is_some() {
                 self.cancel_placement();
             } else if self.stroke.is_active() {
-                self.stroke.cancel();
+                self.stroke.cancel(&mut self.doc);
                 self.drag = Drag::None;
             } else if self.dlg.help {
                 self.dlg.help = false;
@@ -1288,6 +1288,8 @@ impl PanoApp {
     }
 
     fn gpu_sync(&mut self, frame: &mut eframe::Frame) {
+        // Paint the queued dabs of a wet (mixing) stroke into the layer.
+        self.stroke.flush(&mut self.doc);
         // Thumbnails of layers that changed.
         for (id, _) in &self.doc.dirty {
             if !self.stroke.is_active() || *id != self.stroke.layer() {

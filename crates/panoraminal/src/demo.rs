@@ -149,7 +149,7 @@ pub fn build(w: u32, h: u32) -> Document {
     let mut stroke =
         |d: &mut Document, layer, tool: ToolKind, size: f32, rgb: [u8; 3], pts: Vec<(f64, f64)>| {
             d.active = layer;
-            let mut s = BrushSettings::preset(tool);
+            let mut s = BrushSettings::classic(tool);
             s.size = size * k;
             s.smoothing = 0.0;
             s.pressure_size = false;

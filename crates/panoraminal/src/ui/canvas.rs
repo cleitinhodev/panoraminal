@@ -360,7 +360,7 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         // Pinch / two-finger gestures.
         if let Some(mt) = ctx.multi_touch() {
             if app.stroke.is_active() {
-                app.stroke.cancel();
+                app.stroke.cancel(&mut app.doc);
                 app.drag = Drag::None;
             }
             match app.mode {
