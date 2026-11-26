@@ -24,6 +24,8 @@ pub struct Cli {
     pub place_demo: Option<String>,
     /// Start with sample strokes of the paint styles: oil or spray.
     pub paint_demo: Option<String>,
+    /// Start with a sample line layer: edit, width or curve.
+    pub line_demo: Option<String>,
 }
 
 const USAGE: &str = "Panoraminal — paint 360° panoramas
@@ -43,11 +45,14 @@ OPTIONS:
     --window <help|about|settings|new|export>  Open a window at startup
     --frames <n>                  Frames to render before the screenshot (default 30)
     --size <WxH>                  Initial window size in points
-    --tool <id>                   Initial tool (pen, brush, airbrush, custom, eraser)
+    --tool <id>                   Initial tool (pen, brush, airbrush, custom, eraser,
+                                  line-curve, line-free, line-edit, line-width)
     --place-demo <wrap|gnomonic|wall|wall-warp|wall-merged>
                                   Float a generated picture for placing (docs/tests);
                                   wall* = corner-pinned onto a synthetic room
     --paint-demo <oil|spray>      Start with sample strokes of the paint styles (docs/tests)
+    --line-demo <edit|width|curve>
+                                  Start with a sample line layer being edited (docs/tests)
     -h, --help                    Show this help
     -V, --version                 Show the version";
 
@@ -94,6 +99,7 @@ impl Cli {
                 "--tool" => c.tool = Some(val("--tool")?),
                 "--place-demo" => c.place_demo = Some(val("--place-demo")?),
                 "--paint-demo" => c.paint_demo = Some(val("--paint-demo")?),
+                "--line-demo" => c.line_demo = Some(val("--line-demo")?),
                 "--demo" => c.demo = true,
                 "--no-splash" => c.no_splash = true,
                 s if s.starts_with('-') && s.len() > 1 && !std::path::Path::new(s).exists() => {

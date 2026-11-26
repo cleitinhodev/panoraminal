@@ -271,6 +271,8 @@ impl PanoApp {
             return;
         };
         self.drag = crate::app::Drag::None;
+        // A line layer only holds strokes: placed images always get their own layer.
+        let new_layer = new_layer || self.doc.active_is_lines();
         if !new_layer {
             match self.doc.active_layer() {
                 Some(l) if l.visible => {}

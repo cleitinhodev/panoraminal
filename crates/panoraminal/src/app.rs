@@ -3,6 +3,7 @@
 use crate::cli::Cli;
 use crate::icons::Icons;
 use crate::jobs::{JobResult, Jobs};
+use crate::linetools::LineTool;
 use crate::settings::{self, AnimChoice, Settings, ThemeChoice};
 use crate::shortcuts::{Action, TABLE};
 use crate::theme::{self, Palette};
@@ -25,10 +26,12 @@ pub enum Tool {
     Paint(ToolKind),
     Eyedropper,
     Fill,
+    /// Vector line tools (1.4).
+    Line(LineTool),
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [
+    pub const ALL: [Tool; 11] = [
         Tool::Paint(ToolKind::Pen),
         Tool::Paint(ToolKind::Brush),
         Tool::Paint(ToolKind::Airbrush),
@@ -36,6 +39,10 @@ impl Tool {
         Tool::Paint(ToolKind::Eraser),
         Tool::Eyedropper,
         Tool::Fill,
+        Tool::Line(LineTool::Curve),
+        Tool::Line(LineTool::Freehand),
+        Tool::Line(LineTool::Edit),
+        Tool::Line(LineTool::Thickness),
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -46,6 +53,7 @@ impl Tool {
             Tool::Paint(ToolKind::Eraser) => "tool.eraser",
             Tool::Eyedropper => "tool.eyedropper",
             Tool::Fill => "tool.fill",
+            Tool::Line(t) => t.label(),
         }
     }
     pub fn glyph(self) -> crate::icons::Glyph {
@@ -58,6 +66,10 @@ impl Tool {
             Tool::Paint(ToolKind::Eraser) => Glyph::Eraser,
             Tool::Eyedropper => Glyph::Eyedropper,
             Tool::Fill => Glyph::Bucket,
+            Tool::Line(LineTool::Curve) => Glyph::LineCurve,
+            Tool::Line(LineTool::Freehand) => Glyph::LineFree,
+            Tool::Line(LineTool::Edit) => Glyph::LineEdit,
+            Tool::Line(LineTool::Thickness) => Glyph::LineWidth,
         }
     }
     pub fn action(self) -> Action {
@@ -69,6 +81,10 @@ impl Tool {
             Tool::Paint(ToolKind::Eraser) => Action::ToolEraser,
             Tool::Eyedropper => Action::ToolEyedropper,
             Tool::Fill => Action::ToolFill,
+            Tool::Line(LineTool::Curve) => Action::ToolLineCurve,
+            Tool::Line(LineTool::Freehand) => Action::ToolLineFree,
+            Tool::Line(LineTool::Edit) => Action::ToolLineEdit,
+            Tool::Line(LineTool::Thickness) => Action::ToolLineWidth,
         }
     }
 }
@@ -125,6 +141,8 @@ pub enum Drag {
     Rotate,
     /// Dragging a handle of the floating image.
     Place,
+    /// A line tool edit (point, stroke, width, freehand line, curve point).
+    Line,
 }
 
 pub struct ScreenshotState {
@@ -188,6 +206,8 @@ pub struct PanoApp {
     pub floating: Option<crate::placing::Floating>,
     /// Paint style controls (styles, tip shapes, previews).
     pub paint_ui: crate::ui::paintui::PaintUi,
+    /// Line layer tools: selection and the edit in progress.
+    pub lines: crate::linetools::LineState,
 }
 
 fn max_dim_for(device_max: u32) -> u32 {
@@ -306,6 +326,7 @@ impl PanoApp {
             blib: crate::brushlib::BrushLib::load(cli.screenshot.is_none()),
             floating: None,
             paint_ui: Default::default(),
+            lines: Default::default(),
             s,
             cli,
         };
@@ -318,6 +339,8 @@ impl PanoApp {
         if let Some(t) = app.cli.tool.as_deref() {
             if let Some(k) = ToolKind::ALL.into_iter().find(|k| k.id() == t) {
                 app.tool = Tool::Paint(k);
+            } else if let Some(k) = LineTool::ALL.into_iter().find(|k| k.id() == t) {
+                app.tool = Tool::Line(k);
             }
         }
         match app.cli.paint_demo.as_deref() {
@@ -355,6 +378,9 @@ impl PanoApp {
         }
         if let Some(m) = app.cli.place_demo.clone() {
             app.place_demo(&m);
+        }
+        if let Some(m) = app.cli.line_demo.clone() {
+            app.line_demo(&m);
         }
         if let Some(f) = app.cli.file.clone() {
             app.open_path(ctx, f);
@@ -444,6 +470,7 @@ impl PanoApp {
         self.dlg.rename = None;
         self.floating = None;
         self.blib.used.clear();
+        self.lines = Default::default();
     }
 
     pub fn snapshot(&self) -> ProjectSnapshot {
@@ -832,6 +859,7 @@ impl PanoApp {
         }
         self.last_autosave_check = now;
         if self.stroke.is_active()
+            || self.line_busy()
             || !self.is_modified()
             || self.hist.state_id() == self.autosaved_state
         {
@@ -846,6 +874,7 @@ impl PanoApp {
     // ------------------------------------------------------------------ editing
 
     pub fn finish_stroke(&mut self) {
+        self.line_finish();
         if self.stroke.is_active() {
             let before = self.doc.active;
             if let Some(e) = self.stroke.end(&mut self.doc) {
@@ -943,6 +972,18 @@ impl PanoApp {
     pub fn clear_layer(&mut self) {
         self.finish_stroke();
         let id = self.doc.active;
+        if self.doc.active_is_lines() {
+            self.lines.sel = None;
+            ops::set_lines(
+                &mut self.doc,
+                &mut self.hist,
+                id,
+                Default::default(),
+                "hist.clear",
+            );
+            self.stale_thumbs.insert(id);
+            return;
+        }
         let len = self.doc.pixel_len();
         if let Some(l) = self.doc.layer_mut(id) {
             if l.is_empty() {
@@ -954,9 +995,13 @@ impl PanoApp {
         }
     }
 
-    pub fn fill_layer(&mut self) {
+    pub fn fill_layer(&mut self, ctx: &egui::Context) {
         self.finish_stroke();
         let id = self.doc.active;
+        if self.doc.active_is_lines() {
+            self.toast(ctx, ToastKind::Error, tr("toast.lines_paint"));
+            return;
+        }
         let c = self.primary;
         if let Some(l) = self.doc.layer_mut(id) {
             let mut px = l.pixels.clone();
@@ -973,7 +1018,27 @@ impl PanoApp {
         self.finish_stroke();
         let w = self.doc.width as usize;
         let mut edits = Vec::new();
-        for l in self.doc.layers.iter_mut() {
+        // Line layers mirror their strokes and are re-rendered from them.
+        let line_ids: Vec<LayerId> = self
+            .doc
+            .layers
+            .iter()
+            .filter(|l| l.is_lines())
+            .map(|l| l.id)
+            .collect();
+        for id in line_ids {
+            let Some(before) = self.doc.layer(id).and_then(|l| l.lines.clone()) else {
+                continue;
+            };
+            let mut art = before.clone();
+            art.flip_lon();
+            panoraminal_core::lines::apply(&mut self.doc, id, art);
+            edits.push(panoraminal_core::Edit::Lines {
+                layer: id,
+                art: Some(before),
+            });
+        }
+        for l in self.doc.layers.iter_mut().filter(|l| !l.is_lines()) {
             let old = l.pixels.clone();
             for row in l.pixels.chunks_exact_mut(w * 4) {
                 let mut px: Vec<[u8; 4]> = row
@@ -990,7 +1055,13 @@ impl PanoApp {
                 pixels: old,
             });
         }
-        let ids: Vec<_> = self.doc.layers.iter().map(|l| l.id).collect();
+        let ids: Vec<_> = self
+            .doc
+            .layers
+            .iter()
+            .filter(|l| !l.is_lines())
+            .map(|l| l.id)
+            .collect();
         for id in ids {
             self.doc.mark_layer_full(id);
         }
@@ -1080,6 +1151,26 @@ impl PanoApp {
             Action::ToolEraser => self.set_tool(Tool::Paint(ToolKind::Eraser)),
             Action::ToolEyedropper => self.set_tool(Tool::Eyedropper),
             Action::ToolFill => self.set_tool(Tool::Fill),
+            Action::ToolLineCurve => self.set_tool(Tool::Line(LineTool::Curve)),
+            Action::ToolLineFree => self.set_tool(Tool::Line(LineTool::Freehand)),
+            Action::ToolLineEdit => self.set_tool(Tool::Line(LineTool::Edit)),
+            Action::ToolLineWidth => self.set_tool(Tool::Line(LineTool::Thickness)),
+            Action::NewLineLayer => self.new_line_layer(ctx),
+            Action::SizeDown | Action::SizeUp if matches!(self.tool, Tool::Line(_)) => {
+                let l = &mut self.s.lines;
+                let f = if a == Action::SizeUp {
+                    1.0 / 0.85
+                } else {
+                    0.85
+                };
+                l.width = ((l.width * f * 2.0).round() / 2.0).clamp(
+                    panoraminal_core::lines::MIN_WIDTH,
+                    panoraminal_core::lines::MAX_WIDTH,
+                );
+                if a == Action::SizeUp && l.width < 3.0 {
+                    l.width += 0.5;
+                }
+            }
             Action::SizeDown | Action::SizeUp => {
                 if let Some(b) = self.brush_mut() {
                     let f = if a == Action::SizeUp {
@@ -1114,6 +1205,8 @@ impl PanoApp {
             Action::PlaceCommit => {
                 if self.floating.is_some() {
                     self.commit_placement(ctx, false);
+                } else if self.line_busy() {
+                    self.line_finish();
                 }
             }
             Action::PlaceDistort => {
@@ -1136,7 +1229,12 @@ impl PanoApp {
             Action::NewLayer => self.new_layer(ctx),
             Action::DuplicateLayer => self.duplicate_layer(ctx),
             Action::MergeDown => self.merge_down(ctx),
-            Action::ClearLayer => self.clear_layer(),
+            Action::ClearLayer => {
+                let on_lines = self.doc.active_is_lines() || self.line_busy();
+                if !(on_lines && self.line_delete()) {
+                    self.clear_layer();
+                }
+            }
             Action::ToggleView => self.toggle_view(),
             Action::ToggleGrid => self.s.show_grid = !self.s.show_grid,
             Action::ResetView => self.reset_view(now),
@@ -1168,12 +1266,11 @@ impl PanoApp {
             return;
         }
         let mut fired = Vec::new();
+        let order = crate::shortcuts::dispatch_order();
         ctx.input_mut(|i| {
-            for sc in TABLE {
-                for k in sc.keys {
-                    if i.consume_shortcut(k) {
-                        fired.push(sc.action);
-                    }
+            for (action, k) in &order {
+                if i.consume_shortcut(k) {
+                    fired.push(*action);
                 }
             }
         });
@@ -1185,6 +1282,11 @@ impl PanoApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.floating.is_some() {
                 self.cancel_placement();
+            } else if self.line_busy() {
+                self.line_cancel();
+                self.drag = Drag::None;
+            } else if self.lines.sel.is_some() && matches!(self.tool, Tool::Line(_)) {
+                self.lines.sel = None;
             } else if self.stroke.is_active() {
                 self.stroke.cancel(&mut self.doc);
                 self.drag = Drag::None;
@@ -1512,7 +1614,10 @@ impl eframe::App for PanoApp {
         if self.tool == Tool::Paint(ToolKind::Custom) {
             self.sync_tip();
         }
+        self.line_validate();
         crate::ui::layout(self, ui, now);
+        let down = ctx.input(|i| i.pointer.any_down());
+        self.line_panel_commit(down);
         crate::ui::place::panel(self, &ctx);
         crate::ui::dialogs::show_all(self, &ctx);
         crate::ui::overlay(self, &ctx, now);

@@ -67,6 +67,8 @@ pub struct Settings {
     pub brush_styles_rev: u32,
     /// Styles saved by the user.
     pub user_styles: Vec<UserStyle>,
+    /// Options of the line tools (1.4; missing in older files → defaults).
+    pub lines: crate::linetools::LineSettings,
 }
 
 /// A brush style saved by the user for one tool.
@@ -114,6 +116,7 @@ impl Default for Settings {
             place_projection: Projection::Gnomonic,
             brush_styles_rev: BRUSH_STYLES_REV,
             user_styles: Vec::new(),
+            lines: Default::default(),
         }
     }
 }
@@ -175,6 +178,7 @@ impl Settings {
             1.0
         };
         self.jpeg_quality = self.jpeg_quality.clamp(10, 100);
+        self.lines.clamp();
         self.new_width = self.new_width.clamp(256, panoraminal_core::MAX_DIM);
         self.new_height = self.new_height.clamp(128, panoraminal_core::MAX_DIM);
         self.autosave_minutes = self.autosave_minutes.min(60);
@@ -292,6 +296,7 @@ mod style_tests {
                      "min_size":0.08,"polar_correction":true}}}"#;
         let s: Settings = serde_json::from_str::<Settings>(json).unwrap().sanitized();
         assert_eq!(s.brush_styles_rev, BRUSH_STYLES_REV);
+        assert_eq!(s.lines, crate::linetools::LineSettings::default());
         let b = s.brush(ToolKind::Brush);
         assert!(b.is_wet(ToolKind::Brush), "the brush becomes an oil brush");
         assert_eq!(

@@ -341,6 +341,7 @@ pub fn brush_card(app: &mut PanoApp, ui: &mut egui::Ui) {
                     .color(pal.text_weak),
             );
         }
+        Tool::Line(t) => super::lines::panel(app, ui, t),
         Tool::Eyedropper => {
             ui.label(
                 egui::RichText::new(tr("eyedropper.hint"))

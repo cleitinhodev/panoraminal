@@ -1,6 +1,7 @@
 //! The painting viewport: GPU paint callback, pointer/pen input and brush cursor.
 
 use crate::app::{Drag, PanoApp, ToastKind, Tool};
+use crate::linetools::{LineTool, Press};
 use crate::theme::with_alpha;
 use eframe::egui::{
     self, Color32, CursorIcon, Event, Key, PointerButton, Pos2, Rect, Sense, Stroke, TouchPhase,
@@ -70,7 +71,7 @@ impl PanoApp {
         }
     }
 
-    fn pressure_now(&self) -> f32 {
+    pub(crate) fn pressure_now(&self) -> f32 {
         if self.s.pen_pressure {
             self.pressure.unwrap_or(1.0)
         } else {
@@ -90,6 +91,10 @@ impl PanoApp {
 
     fn begin_paint(&mut self, ctx: &egui::Context, d: Vec3, shift: bool) {
         let Tool::Paint(kind) = self.tool else { return };
+        if self.doc.active_is_lines() {
+            self.toast(ctx, ToastKind::Error, tr("toast.lines_paint"));
+            return;
+        }
         let b = self.brush();
         let pr = self.pressure_now();
         let ok = match (shift, self.stroke.last_end) {
@@ -130,6 +135,10 @@ impl PanoApp {
         let y = (p.y.floor() as i64).clamp(0, self.doc.height as i64 - 1) as u32;
         if self.doc.active_layer().map(|l| !l.visible).unwrap_or(true) {
             self.toast(ctx, ToastKind::Error, tr("toast.layer_hidden"));
+            return;
+        }
+        if self.doc.active_is_lines() {
+            self.toast(ctx, ToastKind::Error, tr("toast.lines_paint"));
             return;
         }
         let a = self.doc.active;
@@ -275,6 +284,14 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                                     app.drag = Drag::Pick;
                                 }
                                 Tool::Fill => app.do_fill(&ctx, d),
+                                Tool::Line(t) => {
+                                    let pr = app.pressure_now();
+                                    match app.line_press(&ctx, t, *pos, d, *modifiers, pr) {
+                                        Press::Drag => app.drag = Drag::Line,
+                                        Press::Rotate => app.drag = Drag::Rotate,
+                                        Press::None => {}
+                                    }
+                                }
                             }
                         }
                         PointerButton::Secondary | PointerButton::Middle => app.drag = Drag::Rotate,
@@ -294,6 +311,11 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                             if let Some(d) = app.screen_to_dir(*pos) {
                                 app.pick_color(d);
                             }
+                        }
+                        Drag::Line => {
+                            let d = app.screen_to_dir(*pos);
+                            let pr = app.pressure_now();
+                            app.line_drag(*pos, d, pr);
                         }
                         Drag::Place => {
                             if let Some(d) = app.screen_to_dir(*pos) {
@@ -328,6 +350,8 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                             app.stroke.add_point(d, pr, true);
                         }
                         app.finish_stroke();
+                    } else if app.drag == Drag::Line {
+                        app.line_release(*pos);
                     } else if app.drag == Drag::Pick {
                         app.commit_color();
                     } else if app.drag == Drag::Place {
@@ -341,6 +365,10 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                     if app.drag == Drag::Paint {
                         app.finish_stroke();
                     }
+                    if app.drag == Drag::Line {
+                        let p = app.last_pointer.unwrap_or_default();
+                        app.line_release(p);
+                    }
                     app.drag = Drag::None;
                 }
                 _ => {}
@@ -350,6 +378,10 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         if app.drag != Drag::None && !ctx.input(|i| i.pointer.any_down()) {
             if app.drag == Drag::Paint {
                 app.finish_stroke();
+            }
+            if app.drag == Drag::Line {
+                let p = app.last_pointer.unwrap_or_default();
+                app.line_release(p);
             }
             if let Some(f) = app.floating.as_mut() {
                 f.drag = None;
@@ -361,6 +393,10 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         if let Some(mt) = ctx.multi_touch() {
             if app.stroke.is_active() {
                 app.stroke.cancel(&mut app.doc);
+                app.drag = Drag::None;
+            }
+            if app.drag == Drag::Line {
+                app.line_cancel();
                 app.drag = Drag::None;
             }
             match app.mode {
@@ -434,6 +470,14 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         .input(|i| i.pointer.hover_pos())
         .filter(|p| rect.contains(*p) && hovered);
     app.cursor_dir = ptr.and_then(|p| app.screen_to_dir(p));
+    // Point / line under the pointer for the edit tools.
+    app.lines.hover = match (app.is_line_tool(), app.drag) {
+        (Some(LineTool::Edit | LineTool::Thickness), Drag::None) if app.floating.is_none() => {
+            ptr.and_then(|p| app.line_hit(p))
+        }
+        (_, Drag::Line) => app.lines.hover,
+        _ => None,
+    };
     let place_hover = if app.floating.is_some() {
         match app.floating.as_ref().and_then(|f| f.drag) {
             Some(d) => Some(d.handle),
@@ -454,12 +498,18 @@ pub fn show(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                 Tool::Paint(_) if mods.alt => CursorIcon::Crosshair,
                 Tool::Paint(_) => CursorIcon::None,
                 Tool::Eyedropper | Tool::Fill => CursorIcon::Crosshair,
+                Tool::Line(t) => {
+                    super::lines::cursor_for(t, app.lines.hover, app.drag == Drag::Line)
+                }
             }
         };
         ctx.set_cursor_icon(icon);
     }
     super::place::draw(app, ui.painter(), place_hover);
     let floating = app.floating.is_some();
+    if !floating {
+        super::lines::draw_overlay(app, ui.painter(), ptr, mods);
+    }
     if let (Some(p), Some(d), Tool::Paint(_), false) = (ptr, app.cursor_dir, app.tool, floating) {
         if !space && app.drag != Drag::Rotate && !mods.alt {
             draw_brush_ring(app, ui.painter(), p, d);

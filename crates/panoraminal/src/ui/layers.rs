@@ -62,6 +62,22 @@ pub fn layers_card(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
         if icon_button(
             ui,
             &pal,
+            Glyph::LineLayer,
+            false,
+            &format!(
+                "{} ({})",
+                tr("menu.layer.new_lines"),
+                first_text(&ctx, Action::NewLineLayer)
+            ),
+            28.0,
+        )
+        .clicked()
+        {
+            app.new_line_layer(&ctx);
+        }
+        if icon_button(
+            ui,
+            &pal,
             Glyph::Duplicate,
             false,
             &format!(
@@ -226,7 +242,7 @@ pub fn layers_card(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
     let mut drag_start = None;
     for vis_i in 0..n {
         let idx = n - 1 - vis_i;
-        let (id, name, visible, locked, opacity, blend) = {
+        let (id, name, visible, locked, opacity, blend, is_lines) = {
             let l = &app.doc.layers[idx];
             (
                 l.id,
@@ -235,6 +251,7 @@ pub fn layers_card(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
                 l.alpha_locked,
                 l.opacity,
                 l.blend,
+                l.is_lines(),
             )
         };
         let (rect, resp) = ui.allocate_exact_size(
@@ -290,6 +307,13 @@ pub fn layers_card(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
             Stroke::new(1.0, with_alpha(pal.stroke, 0.9)),
             egui::StrokeKind::Outside,
         );
+        if is_lines {
+            // Vector badge: this layer holds editable lines.
+            let b =
+                Rect::from_min_size(th.right_bottom() - Vec2::new(15.0, 15.0), Vec2::splat(17.0));
+            p.rect_filled(b, 4.0, with_alpha(brand::ROYAL, 0.92));
+            crate::icons::draw(p, b.shrink(1.5), Glyph::LineLayer, Color32::WHITE);
+        }
         // Name + meta.
         let text_c = if visible { pal.text } else { pal.text_weak };
         let name_pos = Pos2::new(th.right() + 8.0, rect.top() + 6.0);
@@ -375,6 +399,10 @@ pub fn layers_card(app: &mut PanoApp, ui: &mut egui::Ui, now: f64) {
             if ui.button(tr("menu.edit.clear")).clicked() {
                 app.doc.active = id;
                 app.clear_layer();
+            }
+            if is_lines && ui.button(tr("menu.layer.rasterize")).clicked() {
+                app.doc.active = id;
+                app.rasterize_line_layer(&ctx);
             }
             if ui
                 .add_enabled(n > 1, egui::Button::new(tr("menu.layer.delete")))
