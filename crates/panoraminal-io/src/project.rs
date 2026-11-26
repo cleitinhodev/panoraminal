@@ -8,14 +8,20 @@
 //! preview.jpg            small flattened preview (for file browsers / future use)
 //! brushes/library.json   optional: custom brushes embedded in the project (1.1+)
 //! brushes/000_0.png …    their tips (grayscale PNG)
+//! lines/003.json …       optional: vector strokes of line layers (1.4+, format minor 2)
 //! ```
+//!
+//! Compatibility: the manifest `version` stays 1 so every Panoraminal 1.x opens the
+//! file. Newer, optional data is announced by `minor` (1 = embedded brushes, 2 = line
+//! layers) and by optional per-layer fields. A line layer's PNG always holds its
+//! rendered strokes, so older versions show it as a normal layer (and save it as one).
 //!
 //! Legacy Paint360 projects (`.p360.json`, layers as PNG data URLs) are imported too.
 
 use crate::{encode_jpeg, encode_png, IoError, Result};
 use base64::Engine;
 use panoraminal_core::document::downsample;
-use panoraminal_core::{BlendMode, Document, Layer, MAX_DIM, MAX_LAYERS};
+use panoraminal_core::{BlendMode, Document, Layer, LineArt, MAX_DIM, MAX_LAYERS};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek, Write};
 use std::path::Path;
@@ -23,6 +29,9 @@ use std::path::Path;
 pub const PROJECT_EXT: &str = "pano";
 const FORMAT: &str = "panoraminal";
 const VERSION: u32 = 1;
+/// Optional features written by this version (see the module docs).
+const MINOR: u32 = 2;
+const LINES_FORMAT: &str = "panoraminal-lines";
 
 /// Owned copy of a document, safe to send to a background thread for saving.
 #[derive(Clone, Debug)]
@@ -43,6 +52,8 @@ pub struct LayerSnapshot {
     pub blend: BlendMode,
     pub alpha_locked: bool,
     pub pixels: Vec<u8>,
+    /// Vector strokes of a line layer (`pixels` is their raster cache).
+    pub lines: Option<LineArt>,
 }
 
 impl ProjectSnapshot {
@@ -61,6 +72,7 @@ impl ProjectSnapshot {
                     blend: l.blend,
                     alpha_locked: l.alpha_locked,
                     pixels: l.pixels.clone(),
+                    lines: l.lines.clone(),
                 })
                 .collect(),
             brushes: Vec::new(),
@@ -76,6 +88,13 @@ impl ProjectSnapshot {
             l.opacity = s.opacity.clamp(0.0, 1.0);
             l.blend = s.blend;
             l.alpha_locked = s.alpha_locked;
+            if let Some(art) = s.lines {
+                // Keep the cache exactly equal to the strokes.
+                if l.pixels.len() == d.pixel_len() {
+                    panoraminal_core::lines::render_full(&art, &mut l.pixels, d.width, d.height);
+                    l.lines = Some(art);
+                }
+            }
             d.layers.push(l);
         }
         let i = self.active_index.min(d.layers.len().saturating_sub(1));
@@ -99,6 +118,9 @@ struct Manifest {
     height: u32,
     #[serde(default)]
     active_index: usize,
+    /// Optional features (0 = 1.0, 1 = embedded brushes, 2 = line layers).
+    #[serde(default)]
+    minor: u32,
     layers: Vec<ManifestLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     brushes: Option<String>,
@@ -116,6 +138,17 @@ struct ManifestLayer {
     #[serde(default)]
     alpha_locked: bool,
     file: String,
+    /// Vector strokes of a line layer (1.4+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lines: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LinesFile {
+    format: String,
+    version: u32,
+    #[serde(flatten)]
+    art: LineArt,
 }
 fn yes() -> bool {
     true
@@ -154,6 +187,7 @@ pub fn project_bytes(p: &ProjectSnapshot) -> Result<Vec<u8>> {
             width: w,
             height: h,
             active_index: p.active_index,
+            minor: MINOR,
             layers: p
                 .layers
                 .iter()
@@ -165,6 +199,7 @@ pub fn project_bytes(p: &ProjectSnapshot) -> Result<Vec<u8>> {
                     blend: l.blend.id().into(),
                     alpha_locked: l.alpha_locked,
                     file: format!("layers/{i:03}.png"),
+                    lines: l.lines.as_ref().map(|_| format!("lines/{i:03}.json")),
                 })
                 .collect(),
             brushes: (!p.brushes.is_empty()).then(|| "brushes/library.json".to_string()),
@@ -174,6 +209,17 @@ pub fn project_bytes(p: &ProjectSnapshot) -> Result<Vec<u8>> {
         for (i, png) in pngs.into_iter().enumerate() {
             zw.start_file(format!("layers/{i:03}.png"), stored)?;
             zw.write_all(&png?)?;
+        }
+        for (i, l) in p.layers.iter().enumerate() {
+            if let Some(art) = &l.lines {
+                let f = LinesFile {
+                    format: LINES_FORMAT.into(),
+                    version: 1,
+                    art: art.clone(),
+                };
+                zw.start_file(format!("lines/{i:03}.json"), deflated)?;
+                zw.write_all(&serde_json::to_vec(&f)?)?;
+            }
         }
         let pw = 512.min(w);
         let ph = (pw * h / w).max(1);
@@ -268,6 +314,21 @@ fn load_zip<R: Read + Seek>(r: R) -> Result<ProjectSnapshot> {
     });
     let mut layers = Vec::new();
     for (l, px) in m.layers.into_iter().zip(decoded) {
+        // Unreadable stroke data degrades to the raster cache.
+        let lines = l.lines.as_deref().and_then(|f| {
+            if !f.starts_with("lines/") {
+                return None;
+            }
+            let mut b = Vec::new();
+            z.by_name(f).ok()?.read_to_end(&mut b).ok()?;
+            let lf: LinesFile = serde_json::from_slice(&b).ok()?;
+            if lf.format != LINES_FORMAT {
+                return None;
+            }
+            let mut art = lf.art;
+            art.sanitize();
+            Some(art)
+        });
         layers.push(LayerSnapshot {
             name: l.name.chars().take(80).collect(),
             visible: l.visible,
@@ -279,6 +340,7 @@ fn load_zip<R: Read + Seek>(r: R) -> Result<ProjectSnapshot> {
             blend: BlendMode::from_id(&l.blend).unwrap_or_default(),
             alpha_locked: l.alpha_locked,
             pixels: px?,
+            lines,
         });
     }
     let mut brushes = Vec::new();
@@ -364,6 +426,7 @@ fn load_legacy_json(bytes: &[u8]) -> Result<ProjectSnapshot> {
             blend: BlendMode::from_id(&l.blend).unwrap_or_default(),
             alpha_locked: false,
             pixels: decode_layer_png(&png, p.width, p.height)?,
+            lines: None,
         });
     }
     let n = layers.len();
@@ -425,6 +488,136 @@ mod tests {
         // projects without brushes carry none
         let bytes = project_bytes(&ProjectSnapshot::from_document(&d)).unwrap();
         assert!(load_project_bytes(&bytes).unwrap().brushes.is_empty());
+    }
+
+    fn with_lines() -> Document {
+        use panoraminal_core::history::{ops, History};
+        use panoraminal_core::{LinePoint, LineStroke};
+        let mut d = sample();
+        let mut h = History::new();
+        let id = ops::add_line_layer(&mut d, &mut h, "Linhas").unwrap();
+        let art = LineArt {
+            strokes: vec![LineStroke {
+                points: vec![
+                    LinePoint {
+                        lon: 350.0,
+                        lat: 5.0,
+                        w: 1.0,
+                        sharp: false,
+                    },
+                    LinePoint {
+                        lon: 20.0,
+                        lat: 30.0,
+                        w: 2.5,
+                        sharp: true,
+                    },
+                    LinePoint {
+                        lon: 60.0,
+                        lat: -10.0,
+                        w: 0.5,
+                        sharp: false,
+                    },
+                ],
+                color: [255, 216, 26],
+                width: 5.0,
+                taper_start: 0.2,
+                taper_end: 0.4,
+                ..Default::default()
+            }],
+        };
+        ops::set_lines(&mut d, &mut h, id, art, "hist.line_add");
+        d.layer_mut(id).unwrap().blend = BlendMode::Screen;
+        d
+    }
+
+    #[test]
+    fn line_layers_roundtrip() {
+        let d = with_lines();
+        let bytes = project_bytes(&ProjectSnapshot::from_document(&d)).unwrap();
+        let d2 = load_project_bytes(&bytes).unwrap().into_document();
+        assert_eq!(d2.layers.len(), 3);
+        assert_eq!(d2.layers[2].lines, d.layers[2].lines);
+        assert_eq!(d2.layers[2].pixels, d.layers[2].pixels);
+        assert_eq!(d2.layers[2].blend, BlendMode::Screen);
+        assert!(!d2.layers[1].is_lines());
+        assert_eq!(d2.flatten(None), d.flatten(None));
+    }
+
+    #[test]
+    fn line_layers_degrade_for_older_readers() {
+        let d = with_lines();
+        let bytes = project_bytes(&ProjectSnapshot::from_document(&d)).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut s = String::new();
+        z.by_name("manifest.json")
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        // 1.0–1.3 accept version 1 and ignore the unknown fields...
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["minor"], 2);
+        assert_eq!(v["layers"][2]["lines"], "lines/002.json");
+        assert!(v["layers"][1].get("lines").is_none());
+        // ...and read the layer PNG, which holds the rendered strokes.
+        let mut png = Vec::new();
+        z.by_name("layers/002.png")
+            .unwrap()
+            .read_to_end(&mut png)
+            .unwrap();
+        assert_eq!(decode_layer_png(&png, 128, 64).unwrap(), d.layers[2].pixels);
+        // A 1.3-style manifest without the new fields still loads (as raster).
+        let old = s.replace("\"lines\": \"lines/002.json\"", "\"x\": 0");
+        let mut out = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut out);
+            let o = zip::write::SimpleFileOptions::default();
+            for i in 0..z.len() {
+                let mut f = z.by_index(i).unwrap();
+                let name = f.name().unwrap().to_string();
+                let mut b = Vec::new();
+                f.read_to_end(&mut b).unwrap();
+                zw.start_file(name.clone(), o).unwrap();
+                if name == "manifest.json" {
+                    zw.write_all(old.as_bytes()).unwrap();
+                } else {
+                    zw.write_all(&b).unwrap();
+                }
+            }
+            zw.finish().unwrap();
+        }
+        let d3 = load_project_bytes(out.get_ref()).unwrap().into_document();
+        assert!(!d3.layers[2].is_lines());
+        assert_eq!(d3.layers[2].pixels, d.layers[2].pixels);
+    }
+
+    #[test]
+    fn corrupt_line_data_falls_back_to_pixels() {
+        let d = with_lines();
+        let bytes = project_bytes(&ProjectSnapshot::from_document(&d)).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut out = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut out);
+            let o = zip::write::SimpleFileOptions::default();
+            for i in 0..z.len() {
+                let mut f = z.by_index(i).unwrap();
+                let name = f.name().unwrap().to_string();
+                let mut b = Vec::new();
+                f.read_to_end(&mut b).unwrap();
+                zw.start_file(name.clone(), o).unwrap();
+                zw.write_all(if name.starts_with("lines/") {
+                    b"{oops"
+                } else {
+                    &b
+                })
+                .unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        let d2 = load_project_bytes(out.get_ref()).unwrap().into_document();
+        assert!(!d2.layers[2].is_lines());
+        assert_eq!(d2.layers[2].pixels, d.layers[2].pixels);
     }
 
     #[test]
